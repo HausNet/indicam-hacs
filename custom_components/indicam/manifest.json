@@ -1,0 +1,10 @@
+{
+  "domain": "indicam",
+  "name": "HausNet IndiCam - Indicator Camera Sensor",
+  "documentation": "TODO: Link to documentation",
+  "codeowners": ["admin@hausnet.io"],
+  "issue_tracker": "https://github.com/HausNet/indicam-hacs/issues",
+  "requirements": ["pillow==9.1.0"],
+  "iot_class": "local_polling",
+  "loggers": ["indicam"]
+}

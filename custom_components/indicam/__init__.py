@@ -1,0 +1,1 @@
+"""The HausNet IndiCam component."""
