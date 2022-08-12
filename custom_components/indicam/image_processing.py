@@ -5,7 +5,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Union
+from typing import Any
 
 from PIL import Image, ImageDraw
 import requests as req
@@ -21,7 +21,7 @@ from homeassistant.const import (
     CONF_ENTITY_ID,
     CONF_NAME,
     CONF_SOURCE,
-    CONF_TIMEOUT,
+    CONF_TIMEOUT, CONF_URL,
 )
 from homeassistant.core import HomeAssistant, split_entity_id
 from homeassistant.helpers import template
@@ -32,7 +32,7 @@ from homeassistant.util.pil import draw_box
 
 _LOGGER = logging.getLogger(__name__)
 
-INDICAM_URL = "http://localhost:8001/indicam/api"
+INDICAM_URL = "http://app.hausnet.io/indicam/api"
 
 ATTR_MATCHES = "matches"
 ATTR_SUMMARY = "summary"
@@ -67,10 +67,12 @@ LABEL_SCHEMA = vol.Schema(
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
+        vol.Optional(CONF_URL, default=INDICAM_URL): cv.url,
         vol.Required(CONF_AUTH_KEY): cv.string,
         vol.Required(CONF_DEVICE): cv.string,
         vol.Required(CONF_TIMEOUT, default=90): cv.positive_int,
-        vol.Optional(CONF_FILE_OUT, default=[]): vol.All(cv.ensure_list, [cv.template]),
+        vol.Optional(CONF_FILE_OUT, default=[]):
+            vol.All(cv.ensure_list, [cv.template]),
         vol.Optional(CONF_CONFIDENCE, default=0.0): vol.Range(min=0, max=100),
         vol.Optional(CONF_LABELS, default=[]): vol.All(
             cv.ensure_list, [vol.Any(cv.string, LABEL_SCHEMA)]
@@ -88,7 +90,11 @@ def setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the IndiCam client."""
-    service = IndiCamService(config[CONF_DEVICE], config[CONF_AUTH_KEY])
+    service = IndiCamService(
+        config[CONF_URL],
+        config[CONF_DEVICE],
+        config[CONF_AUTH_KEY]
+    )
     timeout_seconds: int = config[CONF_TIMEOUT]
 
     entities = []
@@ -148,7 +154,8 @@ class IndiCam(ImageProcessingEntity):
     @property
     def state(self):
         """Return the state of the entity -- the last measurement made."""
-        if self._last_result is None or self._last_result["measurement"] is None:
+        if self._last_result is None or \
+                self._last_result["measurement"] is None:
             return None
         return self._last_result["measurement"]["value"]
 
@@ -178,21 +185,29 @@ class IndiCam(ImageProcessingEntity):
         _LOGGER.info("Saving raw image to /tmp/indicam-oil-tank-raw.jpg")
         raw_img.save("/tmp/indicam-oil-tank-raw.jpg")
 
+    @staticmethod
     def _draw_box(
-        self, draw: ImageDraw.Draw, height: int, width: int, cam_config: dict[str, Any]
+            draw: ImageDraw.Draw,
+            height: int,
+            width: int,
+            cam_config: dict[str, Any]
     ) -> None:
         """Draw the focus area box to around the oil float meter. Image size
         is in pixels -- (height, width).
         """
         top = cam_config["window_row"] / height
         left = cam_config["window_col"] / width
-        bottom = (cam_config["window_row"] + cam_config["window_height"]) / height
+        bottom = \
+            (cam_config["window_row"] + cam_config["window_height"]) / height
         right = (cam_config["window_col"] + cam_config["window_width"]) / width
         box = (top, left, bottom, right)
-        draw_box(draw, box, width, height, None, (255, 0, 0))
+        draw_box(draw, box, width, height, "", (255, 0, 0))
 
+    @staticmethod
     def _draw_lines(
-        self, draw: ImageDraw.Draw, cam_config: dict[str, Any], measurement: float
+            draw: ImageDraw.Draw,
+            cam_config: dict[str, Any],
+            measurement: float
     ) -> None:
         """Calculate where the measurement lines go -- top, bottom of bell,
         and the actual measurement. Draw lines to mark each location.
@@ -205,7 +220,11 @@ class IndiCam(ImageProcessingEntity):
 
         draw.line([(left, top), (right, top)], width=10, fill=(255, 0, 0))
         draw.line([(left, bottom), (right, bottom)], width=10, fill=(255, 0, 0))
-        draw.line([(left, middle), (right, middle)], width=10, fill=(255, 255, 0))
+        draw.line(
+            [(left, middle), (right, middle)],
+            width=10,
+            fill=(255, 255, 0)
+        )
 
     def process_image(self, image):
         """Process the image, if the processor is enabled. Resets the enabled
@@ -245,8 +264,9 @@ class IndiCamService:
     unified post method for the image.
     """
 
-    def __init__(self, device: str, auth_key: str) -> None:
+    def __init__(self, url: str, device: str, auth_key: str) -> None:
         """Set up the service URL and call headers."""
+        self._url = url
         self._device = device
         self._auth_header = {"Authorization": f"Token {auth_key}"}
 
@@ -256,7 +276,7 @@ class IndiCamService:
         """
         start = time.monotonic()
         response = req.post(
-            f"{INDICAM_URL}/images/{self._device}/upload/",
+            f"{self._url}/images/{self._device}/upload/",
             data=io.BytesIO(bytearray(image)),
             headers=self._auth_header | {"Content-type": "image/jpeg"},
         )
@@ -286,7 +306,9 @@ class IndiCamService:
             headers=self._auth_header,
         )
         if not response or response.status_code != 200:
-            _LOGGER.error(f"Error retrieving cam config for image {result['image_id']}")
+            _LOGGER.error(
+                f"Error retrieving cam config for image {result['image_id']}"
+            )
             result["cam_config"] = None
         else:
             result["cam_config"] = response.json()[0]
