@@ -291,7 +291,7 @@ class IndiCamService:
             return None, time.monotonic() - start
         result: dict[str, Any] = response.json()
         response = req.get(
-            f"{INDICAM_URL}/measurements/?src_image={result['image_id']}",
+            f"{self._url}/measurements/?src_image={result['image_id']}",
             headers=self._auth_header,
         )
         if not response or response.status_code != 200:
@@ -303,7 +303,7 @@ class IndiCamService:
         else:
             result["measurement"] = response.json()[0]
         response = req.get(
-            f"{INDICAM_URL}/camconfigs/?images={result['image_id']}",
+            f"{self._url}/camconfigs/?images={result['image_id']}",
             headers=self._auth_header,
         )
         if not response or response.status_code != 200:
