@@ -296,7 +296,8 @@ class IndiCamService:
         )
         if not response or response.status_code != 200:
             _LOGGER.error(
-                f"Error retrieving measurement for image {result['image_id']}"
+                f"Error retrieving measurement for image {result['image_id']}: "
+                f"status={response.status_code}"
             )
             result["measurement"] = None
         else:
@@ -307,7 +308,8 @@ class IndiCamService:
         )
         if not response or response.status_code != 200:
             _LOGGER.error(
-                f"Error retrieving cam config for image {result['image_id']}"
+                f"Error retrieving cam config for image {result['image_id']}: "
+                f"status={response.status_code}"
             )
             result["cam_config"] = None
         else:
