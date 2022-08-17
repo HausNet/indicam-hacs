@@ -32,7 +32,7 @@ from homeassistant.util.pil import draw_box
 
 _LOGGER = logging.getLogger(__name__)
 
-INDICAM_URL = "http://app.hausnet.io/indicam/api"
+INDICAM_URL = "https://app.hausnet.io/indicam/api"
 
 ATTR_MATCHES = "matches"
 ATTR_SUMMARY = "summary"
