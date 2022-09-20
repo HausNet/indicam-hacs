@@ -174,9 +174,8 @@ class IndiCam(ImageProcessingEntity):
         img = Image.open(io.BytesIO(bytearray(image))).convert("RGB")
         img_width, img_height = img.size
         draw = ImageDraw.Draw(img)
-        if cam_config:
-            self._draw_box(draw, img_height, img_width, cam_config)
-            self._draw_lines(draw, cam_config, measurement["value"])
+        self._draw_box(draw, img_height, img_width, measurement)
+        self._draw_float_line(draw, measurement)
         for path in paths:
             _LOGGER.info("Saving results image to %s", path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -190,46 +189,37 @@ class IndiCam(ImageProcessingEntity):
             draw: ImageDraw.Draw,
             height: int,
             width: int,
-            cam_config: dict[str, Any]
+            measurement: dict[str, Any]
     ) -> None:
-        """Draw the focus area box to around the oil float meter. Image size
-        is in pixels -- (height, width).
-        """
-        top = cam_config["window_row"] / height
-        left = cam_config["window_col"] / width
-        bottom = \
-            (cam_config["window_row"] + cam_config["window_height"]) / height
-        right = (cam_config["window_col"] + cam_config["window_width"]) / width
+        """ Draw the (estimated) borders of the gauge. Drawn in yellow.  """
+        left = measurement["gauge_left_col"] / width
+        right = measurement["gauge_right_col"] / width
+        top = measurement["gauge_top_row"] / height
+        bottom = measurement["gauge_bottom_row"] / height
         box = (top, left, bottom, right)
-        draw_box(draw, box, width, height, "", (255, 0, 0))
+        draw_box(draw, box, width, height, "", (255, 255, 0))
 
     @staticmethod
-    def _draw_lines(
+    def _draw_float_line(
             draw: ImageDraw.Draw,
-            cam_config: dict[str, Any],
-            measurement: float
+            measurement: dict[str, Any]
     ) -> None:
-        """Calculate where the measurement lines go -- top, bottom of bell,
-        and the actual measurement. Draw lines to mark each location.
+        """ Calculate where the float top measurement line go, and draw it on the image being constructed.
+            Drawn in red.
         """
-        left = cam_config["window_col"] - 40
-        right = cam_config["window_col"] + cam_config["window_width"] + 40
-        top = cam_config["window_row"] + cam_config["full_mark_pixels"]
-        bottom = cam_config["window_row"] + cam_config["window_height"]
-        middle = bottom - ((bottom - top) * measurement)
-
-        draw.line([(left, top), (right, top)], width=10, fill=(255, 0, 0))
-        draw.line([(left, bottom), (right, bottom)], width=10, fill=(255, 0, 0))
+        left = measurement['gauge_left_col']
+        right = measurement['gauge_right_col']
+        row = measurement['float_top_col']
         draw.line(
-            [(left, middle), (right, middle)],
+            [(left, row), (right, row)],
             width=10,
-            fill=(255, 255, 0)
+            fill=(255, 0, 0)
         )
 
     def process_image(self, image):
-        """Process the image, if the processor is enabled. Resets the enabled
-        flag after processing, so that it has to be re-enabled for the next
-        run.
+        """ Process the image, if the processor is enabled. Resets the enabled
+            flag after processing, so that it has to be re-enabled for the next
+            run.
         """
         _LOGGER.debug("Processing oil tank image")
 
@@ -260,8 +250,8 @@ class IndiCam(ImageProcessingEntity):
 
 
 class IndiCamService:
-    """A class that wraps the IndiCam service parameters, and provide a
-    unified post method for the image.
+    """ A class that wraps the IndiCam service parameters, and provide a
+        unified post method for the image.
     """
 
     def __init__(self, url: str, device: str, auth_key: str) -> None:
