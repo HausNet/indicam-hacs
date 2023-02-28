@@ -133,7 +133,7 @@ class IndiCam(ImageProcessingEntity):
             self._name = f"IndiCam {name}"
         self._file_out = config[CONF_FILE_OUT]
         self._service = service
-        self._last_result: dict[str, Any] | None = None
+        self._last_result: GaugeMeasurement | None = None
         self._enabled = False
 
         template.attach(hass, self._file_out)
@@ -154,10 +154,9 @@ class IndiCam(ImageProcessingEntity):
     @property
     def state(self):
         """Return the state of the entity -- the last measurement made."""
-        if self._last_result is None or \
-                self._last_result["measurement"] is None:
+        if not self._last_result or not self._last_result.value:
             return None
-        return self._last_result["measurement"]["value"]
+        return self._last_result.value
 
     @property
     def extra_state_attributes(self):
@@ -169,6 +168,31 @@ class IndiCam(ImageProcessingEntity):
         images that are acquired from outside the analysis framework.
         """
         self._enabled = enable
+
+    def process_image(self, image):
+        """ Process the image, if the processor is enabled. Resets the enabled
+            flag after processing, so that it has to be re-enabled for the next
+            run.
+        """
+        _LOGGER.debug("Processing oil tank image")
+        # Send the image for processing
+        self._last_result, cam_config, elapsed_time = \
+            self._service.process_img(image)
+        if not self._last_result or not self._last_result.value:
+            self._process_time = elapsed_time
+            return
+        # Save Images
+        if self._last_result.value and self._file_out:
+            paths = []
+            for path_template in self._file_out:
+                if isinstance(path_template, template.Template):
+                    paths.append(
+                        path_template.render(camera_entity=self._camera_entity)
+                    )
+                else:
+                    paths.append(path_template)
+            self._save_image(image, self._last_result, cam_config, paths)
+        self._process_time = elapsed_time
 
     def _save_image(
             self,
@@ -259,35 +283,6 @@ class IndiCam(ImageProcessingEntity):
             width=10,
             fill=(255, 0, 0)
         )
-
-    def process_image(self, image):
-        """ Process the image, if the processor is enabled. Resets the enabled
-            flag after processing, so that it has to be re-enabled for the next
-            run.
-        """
-        _LOGGER.debug("Processing oil tank image")
-        # Send the image for processing
-        self._last_result, elapsed_time = self._service.process_img(image)
-        if not self._last_result:
-            self._process_time = elapsed_time
-            return
-        # Save Images
-        if self._last_result["measurement"] and self._file_out:
-            paths = []
-            for path_template in self._file_out:
-                if isinstance(path_template, template.Template):
-                    paths.append(
-                        path_template.render(camera_entity=self._camera_entity)
-                    )
-                else:
-                    paths.append(path_template)
-            self._save_image(
-                image,
-                self._last_result["measurement"],
-                self._last_result["cam_config"],
-                paths,
-            )
-        self._process_time = elapsed_time
 
 
 @dataclass
