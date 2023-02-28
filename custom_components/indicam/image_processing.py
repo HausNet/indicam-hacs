@@ -5,6 +5,7 @@ import io
 import logging
 import os
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image, ImageDraw
@@ -95,7 +96,6 @@ def setup_platform(
         config[CONF_DEVICE],
         config[CONF_AUTH_KEY]
     )
-    timeout_seconds: int = config[CONF_TIMEOUT]
 
     entities = []
     for camera in config[CONF_SOURCE]:
@@ -166,15 +166,23 @@ class IndiCam(ImageProcessingEntity):
 
     def enable_processing(self, enable=True):
         """Enable the processing of camera images. This is to avoid processing
-        images that are acquired outside of the analysis framework.
+        images that are acquired from outside the analysis framework.
         """
         self._enabled = enable
 
-    def _save_image(self, image, measurement, cam_config, paths):
+    def _save_image(
+            self,
+            image,
+            measurement: GaugeMeasurement,
+            cam_config: CamConfig,
+            paths: [str]
+    ) -> None:
         img = Image.open(io.BytesIO(bytearray(image))).convert("RGB")
         img_width, img_height = img.size
         draw = ImageDraw.Draw(img)
-        self._draw_box(draw, img_height, img_width, measurement)
+        self._draw_body(draw, img_height, img_width, measurement)
+        self._draw_scale(draw, measurement)
+        self._draw_min_max(draw, measurement, cam_config)
         self._draw_float_line(draw, measurement)
         for path in paths:
             _LOGGER.info("Saving results image to %s", path)
@@ -185,33 +193,69 @@ class IndiCam(ImageProcessingEntity):
         raw_img.save("/tmp/indicam-oil-tank-raw.jpg")
 
     @staticmethod
-    def _draw_box(
+    def _draw_body(
             draw: ImageDraw.Draw,
-            height: int,
-            width: int,
-            measurement: dict[str, Any]
+            img_height: int,
+            img_width: int,
+            msr: GaugeMeasurement
     ) -> None:
-        """ Draw the (estimated) borders of the gauge. Drawn in yellow.  """
-        left = measurement["gauge_left_col"] / width
-        right = measurement["gauge_right_col"] / width
-        top = measurement["gauge_top_row"] / height
-        bottom = measurement["gauge_bottom_row"] / height
+        """ Draw the (estimated) borders of the gauge body.
+            Drawn in yellow.
+        """
+        top = msr.body_top / img_height
+        left = msr.body_left / img_width
+        bottom = msr.body_bottom / img_height
+        right = msr.body_right / img_width
         box = (top, left, bottom, right)
-        draw_box(draw, box, width, height, "", (255, 255, 0))
+        draw_box(draw, box, img_width, img_height, color=(255, 255, 0))
 
     @staticmethod
-    def _draw_float_line(
-            draw: ImageDraw.Draw,
-            measurement: dict[str, Any]
+    def _draw_scale(draw: ImageDraw.Draw, msr: GaugeMeasurement) -> None:
+        """ Draw a scale with a mark at every 10% of the gauge height
+            down the left hand side of the gauge.
+        """
+        height = msr.body_bottom - msr.body_top + 1
+        width = msr.body_right - msr.body_left + 1
+        mark_width = 0.1 * width
+        for perc_mark in range(0, 101, 10):
+            mark_loc = round(msr.body_top + height * perc_mark / 100)
+            draw.line(
+                [
+                    (msr.body_left - mark_width, mark_loc),
+                    (msr.body_left, mark_loc)
+                ],
+                width=10,
+                fill=(255, 255, 0)
+            )
+
+    @staticmethod
+    def _draw_min_max(
+            draw: ImageDraw.Draw, msr: GaugeMeasurement, cam_conf: CamConfig
     ) -> None:
-        """ Calculate where the float top measurement line go, and draw it on the image being constructed.
+        """ Draw the min and max measurement lines in the same color as the
+            float measurement line.
+        """
+        height = (msr.body_bottom - msr.body_top)
+        max_row = msr.body_top + cam_conf.max_perc * height
+        min_row = msr.body_bottom - cam_conf.min_perc * height
+        draw.line(
+            [(msr.body_left, max_row), (msr.body_right, max_row)],
+            width=10,
+            fill=(255, 0, 0)
+        )
+        draw.line(
+            [(msr.body_left, min_row), (msr.body_right, min_row)],
+            width=10,
+            fill=(255, 0, 0)
+        )
+
+    @staticmethod
+    def _draw_float_line(draw: ImageDraw.Draw, msr: GaugeMeasurement) -> None:
+        """ Draw the float measurement line on the image being constructed.
             Drawn in red.
         """
-        left = measurement['gauge_left_col']
-        right = measurement['gauge_right_col']
-        row = measurement['float_top_col']
         draw.line(
-            [(left, row), (right, row)],
+            [(msr.body_left, msr.float_top), (msr.body_right, msr.float_top)],
             width=10,
             fill=(255, 0, 0)
         )
@@ -222,13 +266,11 @@ class IndiCam(ImageProcessingEntity):
             run.
         """
         _LOGGER.debug("Processing oil tank image")
-
         # Send the image for processing
         self._last_result, elapsed_time = self._service.process_img(image)
         if not self._last_result:
             self._process_time = elapsed_time
             return
-
         # Save Images
         if self._last_result["measurement"] and self._file_out:
             paths = []
@@ -245,8 +287,25 @@ class IndiCam(ImageProcessingEntity):
                 self._last_result["cam_config"],
                 paths,
             )
-
         self._process_time = elapsed_time
+
+
+@dataclass
+class GaugeMeasurement:
+    """ Holds the received measurement for convenient access. """
+    body_left: int
+    body_right: int
+    body_top: int
+    body_bottom: int
+    float_top: int
+    value: float
+
+
+@dataclass
+class CamConfig:
+    """ Holds the camera configuration. """
+    min_perc: float
+    max_perc: float
 
 
 class IndiCamService:
@@ -255,53 +314,88 @@ class IndiCamService:
     """
 
     def __init__(self, url: str, device: str, auth_key: str) -> None:
-        """Set up the service URL and call headers."""
+        """ Set up the service URL and call headers. """
         self._url = url
         self._device = device
         self._auth_header = {"Authorization": f"Token {auth_key}"}
 
-    def process_img(self, image) -> (dict[str, Any] | None, float):
-        """Process the image using the service, then fetch the measurement
-        results.
+    def process_img(self, image) -> \
+            (GaugeMeasurement | None, CamConfig | None, float | None):
+        """ Process the image using the service, then fetch the measurement
+            results. Returns the measurement results, the camera configuration,
+            and the elapsed time.
         """
         start = time.monotonic()
+        image_id = self._submit_image(image)
+        if not image_id:
+            return None, None, time.monotonic() - start
+        measurement = self._get_measurement(image_id)
+        if not measurement:
+            return None, None, time.monotonic() - start
+        cam_config = self._get_cam_config(image_id)
+        if not cam_config:
+            return measurement, None, time.monotonic() - start
+        return measurement, cam_config, time.monotonic() - start
+
+    def _submit_image(self, image) -> int | None:
+        """ Post the image to the service, for processing, and return the
+            image ID returned by the API, None if an error occurred.
+        """
         response = req.post(
             f"{self._url}/images/{self._device}/upload/",
             data=io.BytesIO(bytearray(image)),
             headers=self._auth_header | {"Content-type": "image/jpeg"},
-        )
-        _LOGGER.debug(
-            "Sent image to service: status=%s duration=%s",
-            response.status_code,
-            time.monotonic() - start,
+            timeout=30
         )
         if not response or "error" in response:
             if "error" in response:
+                # noinspection PyUnresolvedReferences
                 _LOGGER.error(response["error"])
-            return None, time.monotonic() - start
-        result: dict[str, Any] = response.json()
+            return None
+        return response.json()['image_id']
+
+    def _get_measurement(self, image_id: int) -> GaugeMeasurement | None:
+        """ Get the measurement for the submitted image. """
         response = req.get(
-            f"{self._url}/measurements/?src_image={result['image_id']}",
+            f"{self._url}/measurements/?src_image={image_id}",
             headers=self._auth_header,
+            timeout=30
         )
         if not response or response.status_code != 200:
             _LOGGER.error(
-                f"Error retrieving measurement for image {result['image_id']}: "
-                f"status={response.status_code}"
+                "Error retrieving measurement for image %d', status=%d",
+                image_id,
+                None if not response else response.status_code
             )
-            result["measurement"] = None
-        else:
-            result["measurement"] = response.json()[0]
+            return None
+        result_json = response.json()[0]
+        measurement = GaugeMeasurement(
+            body_left=result_json['gauge_left_col'],
+            body_right=result_json['gauge_right_col'],
+            body_top=result_json['gauge_top_row'],
+            body_bottom=result_json['gauge_bottom_row'],
+            float_top=result_json['float_top_col'],
+            value=result_json['value']
+        )
+        return measurement
+
+    def _get_cam_config(self, image_id: int) -> CamConfig | None:
+        """ Get the camera configuration for the specified image. """
         response = req.get(
-            f"{self._url}/camconfigs/?images={result['image_id']}",
+            f"{self._url}/camconfigs/?images={image_id}",
             headers=self._auth_header,
+            timeout=30
         )
         if not response or response.status_code != 200:
             _LOGGER.error(
-                f"Error retrieving cam config for image {result['image_id']}: "
-                f"status={response.status_code}"
+                "Error retrieving cam config for image id=%d, status=%d",
+                image_id,
+                None if not response else response.status_code
             )
-            result["cam_config"] = None
-        else:
-            result["cam_config"] = response.json()[0]
-        return result, time.monotonic() - start
+            return None
+        config_json = response.json()[0]
+        cam_config = CamConfig(
+            min_perc=config_json['empty_perc_from_bottom'],
+            max_perc=config_json['full_perc_from_top']
+        )
+        return cam_config
