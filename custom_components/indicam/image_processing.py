@@ -6,7 +6,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
 
 from PIL import Image, ImageDraw
 import requests as req
@@ -154,7 +153,7 @@ class IndiCam(ImageProcessingEntity):
     @property
     def state(self):
         """Return the state of the entity -- the last measurement made."""
-        if not self._last_result or not self._last_result.value:
+        if not self._last_result or self._last_result.value is None:
             return None
         return self._last_result.value
 
@@ -163,17 +162,8 @@ class IndiCam(ImageProcessingEntity):
         """Return device specific state attributes."""
         return {}
 
-    def enable_processing(self, enable=True):
-        """Enable the processing of camera images. This is to avoid processing
-        images that are acquired from outside the analysis framework.
-        """
-        self._enabled = enable
-
     def process_image(self, image):
-        """ Process the image, if the processor is enabled. Resets the enabled
-            flag after processing, so that it has to be re-enabled for the next
-            run.
-        """
+        """ Process the given image. """
         _LOGGER.debug("Processing oil tank image")
         # Send the image for processing
         self._last_result, cam_config, elapsed_time = \
@@ -365,12 +355,22 @@ class IndiCamService:
             return None
         result_json = response.json()[0]
         measurement = GaugeMeasurement(
-            body_left=result_json['gauge_left_col'],
-            body_right=result_json['gauge_right_col'],
-            body_top=result_json['gauge_top_row'],
-            body_bottom=result_json['gauge_bottom_row'],
-            float_top=result_json['float_top_col'],
-            value=result_json['value']
+            body_left=int(result_json['gauge_left_col']),
+            body_right=int(result_json['gauge_right_col']),
+            body_top=int(result_json['gauge_top_row']),
+            body_bottom=int(result_json['gauge_bottom_row']),
+            float_top=int(result_json['float_top_col']),
+            value=float(result_json['value'])
+        )
+        _LOGGER.debug(
+            "Measurement received left=%d, right=%d, top=%d, bottom=%d, "
+            "float=%d, value=%f",
+            measurement.body_left,
+            measurement.body_right,
+            measurement.body_top,
+            measurement.body_bottom,
+            measurement.float_top,
+            measurement.value
         )
         return measurement
 
