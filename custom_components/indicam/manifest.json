@@ -1,6 +1,6 @@
 {
   "domain": "indicam",
-  "name": "HausNet IndiCam - Indicator Camera Sensor",
+  "name": "HausNet IndiCam - Indicator Camera Image Processing",
   "documentation": "TODO: Link to documentation",
   "codeowners": ["admin@hausnet.io"],
   "issue_tracker": "https://github.com/HausNet/indicam-hacs/issues",

@@ -1,37 +1,40 @@
 """Support for the HausNet Indicam service."""
+
 from __future__ import annotations
 
 import io
 import logging
 import os
 import time
-from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
-import requests as req
 import voluptuous as vol
 
 from homeassistant.components.image_processing import (
-    CONF_CONFIDENCE,
-    PLATFORM_SCHEMA,
-    ImageProcessingEntity,
+    PLATFORM_SCHEMA as IMGPROC_PLATFORM_SCHEMA,
+    SOURCE_SCHEMA as IMGPROC_SOURCE_SCHEMA,
+    ImageProcessingEntity
 )
 from homeassistant.const import (
     CONF_DEVICE,
     CONF_ENTITY_ID,
     CONF_NAME,
     CONF_SOURCE,
-    CONF_TIMEOUT, CONF_URL,
+    CONF_URL,
+    CONF_MINIMUM,
+    CONF_MAXIMUM,
+    EVENT_HOMEASSISTANT_STARTED
 )
-from homeassistant.core import HomeAssistant, split_entity_id
+from homeassistant.core import HomeAssistant, split_entity_id, Event
 from homeassistant.helpers import template
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util.pil import draw_box
 
-_LOGGER = logging.getLogger(__name__)
+from .api_client import CamConfig, IndiCamServiceClient, GaugeMeasurement
 
+_LOGGER = logging.getLogger(__name__)
 INDICAM_URL = "https://app.hausnet.io/indicam/api"
 
 ATTR_MATCHES = "matches"
@@ -40,71 +43,81 @@ ATTR_TOTAL_MATCHES = "total_matches"
 ATTR_PROCESS_TIME = "process_time"
 
 CONF_AUTH_KEY = "auth_key"
-CONF_DETECTOR = "detector"
-CONF_LABELS = "labels"
-CONF_AREA = "area"
-CONF_TOP = "top"
-CONF_BOTTOM = "bottom"
-CONF_RIGHT = "right"
-CONF_LEFT = "left"
 CONF_FILE_OUT = "file_out"
 
-AREA_SCHEMA = vol.Schema(
+SOURCE_SCHEMA = cv.vol.Schema(
     {
-        vol.Optional(CONF_BOTTOM, default=1): cv.small_float,
-        vol.Optional(CONF_LEFT, default=0): cv.small_float,
-        vol.Optional(CONF_RIGHT, default=1): cv.small_float,
-        vol.Optional(CONF_TOP, default=0): cv.small_float,
+        vol.Required(
+            CONF_DEVICE,
+            description="Device name at Indicam Service"
+        ): cv.string,
+        vol.Required(
+            CONF_SOURCE,
+            description="Source camera entity ID"
+        ): cv.string,
+        vol.Optional(
+            CONF_MINIMUM,
+            default=0,
+            description="Distance of empty mark from bottom of gauge body, " +
+                        "as a % of gauge body height"
+        ): cv.positive_int,
+        vol.Optional(
+            CONF_MAXIMUM,
+            default=0,
+            description="Distance of full mark from top of gauge body, " +
+                        "as a % of gauge body height"
+        ): cv.positive_int,
+        vol.Optional(
+            CONF_FILE_OUT,
+            default=[],
+            description="Path to save decorated image to"
+        ): cv.string
     }
 )
 
-LABEL_SCHEMA = vol.Schema(
+PLATFORM_SCHEMA = IMGPROC_PLATFORM_SCHEMA.extend(
     {
-        vol.Required(CONF_NAME): cv.string,
-        vol.Optional(CONF_AREA): AREA_SCHEMA,
+        vol.Optional(
+            CONF_URL,
+            default=INDICAM_URL,
+            description="The HausNet IndiCam API URL"
+        ): cv.url,
+        vol.Required(CONF_AUTH_KEY, description="API Authentication Token"):
+            cv.string,
+        vol.Optional('indicam'): vol.All(cv.ensure_list, [SOURCE_SCHEMA]),
     }
 )
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Optional(CONF_URL, default=INDICAM_URL): cv.url,
-        vol.Required(CONF_AUTH_KEY): cv.string,
-        vol.Required(CONF_DEVICE): cv.string,
-        vol.Required(CONF_TIMEOUT, default=90): cv.positive_int,
-        vol.Optional(CONF_FILE_OUT, default=[]):
-            vol.All(cv.ensure_list, [cv.template]),
-        vol.Optional(CONF_CONFIDENCE, default=0.0): vol.Range(min=0, max=100),
-        vol.Optional(CONF_LABELS, default=[]): vol.All(
-            cv.ensure_list, [vol.Any(cv.string, LABEL_SCHEMA)]
-        ),
-        vol.Optional(CONF_AREA): AREA_SCHEMA,
-    }
-)
-
 
 # noinspection PyUnusedLocal
-def setup_platform(
+async def async_setup_platform(
     hass: HomeAssistant,
     config: ConfigType,
     add_entities: AddEntitiesCallback,
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the IndiCam client."""
-    service = IndiCamService(
-        config[CONF_URL],
-        config[CONF_DEVICE],
-        config[CONF_AUTH_KEY]
-    )
+    client = IndiCamServiceClient(config[CONF_URL], config[CONF_AUTH_KEY])
 
+    async def setup_service(_event: Event) -> None:
+        """ Synchronize camera configuration. """
+        for indicam in entities:
+            await indicam.post_hass_init_setup()
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, setup_service)
     entities = []
-    for camera in config[CONF_SOURCE]:
+    for camera in config['indicam']:
+        cam_config = CamConfig(
+            min_perc=camera[CONF_MINIMUM], max_perc=camera[CONF_MAXIMUM]
+        )
+        processor = IndiCamProcessor(client, camera[CONF_DEVICE], cam_config)
         entities.append(
             IndiCam(
                 hass,
-                camera[CONF_ENTITY_ID],
-                camera.get(CONF_NAME),
-                config,
-                service,
+                camera[CONF_SOURCE],
+                camera[CONF_DEVICE],
+                cam_config,
+                processor,
+                camera[CONF_FILE_OUT]
             )
         )
     add_entities(entities)
@@ -118,9 +131,9 @@ class IndiCam(ImageProcessingEntity):
         hass: HomeAssistant,
         camera_entity: str,
         name: str,
-        # detector,
-        config: ConfigType,
-        service: IndiCamService,
+        cam_config: CamConfig,
+        processor: IndiCamProcessor,
+        file_out: str
     ) -> None:
         """Initialize a processor entity for a camera."""
         self.hass = hass
@@ -130,15 +143,20 @@ class IndiCam(ImageProcessingEntity):
         else:
             name = split_entity_id(camera_entity)[1]
             self._name = f"IndiCam {name}"
-        self._file_out = config[CONF_FILE_OUT]
-        self._service = service
+        self._file_out = file_out
+        self._processor = processor
         self._last_result: GaugeMeasurement | None = None
         self._enabled = False
+        self._cam_config = cam_config
 
         template.attach(hass, self._file_out)
 
         self._last_image = None
         self._process_time = 0
+
+    async def post_hass_init_setup(self):
+        """ To be called after Home Assistant has finished initializing """
+        await self.hass.async_add_executor_job(self._processor.setup)
 
     @property
     def camera_entity(self):
@@ -166,8 +184,8 @@ class IndiCam(ImageProcessingEntity):
         """ Process the given image. """
         _LOGGER.debug("Processing oil tank image")
         # Send the image for processing
-        self._last_result, cam_config, elapsed_time = \
-            self._service.process_img(image)
+        self._last_result, elapsed_time = \
+            self._processor.process_img(image)
         if not self._last_result or not self._last_result.value:
             self._process_time = elapsed_time
             return
@@ -181,23 +199,21 @@ class IndiCam(ImageProcessingEntity):
                     )
                 else:
                     paths.append(path_template)
-            self._save_image(image, self._last_result, cam_config, paths)
+            self._save_image(image, paths)
         self._process_time = elapsed_time
 
     def _save_image(
             self,
             image,
-            measurement: GaugeMeasurement,
-            cam_config: CamConfig,
             paths: [str]
     ) -> None:
         img = Image.open(io.BytesIO(bytearray(image))).convert("RGB")
         img_width, img_height = img.size
         draw = ImageDraw.Draw(img)
-        self._draw_body(draw, img_height, img_width, measurement)
-        self._draw_scale(draw, measurement)
-        self._draw_min_max(draw, measurement, cam_config)
-        self._draw_float_line(draw, measurement)
+        self._draw_body(draw, img_height, img_width, self._last_result)
+        self._draw_scale(draw, self._last_result)
+        self._draw_min_max(draw, self._last_result, self._cam_config)
+        self._draw_float_line(draw, self._last_result)
         for path in paths:
             _LOGGER.info("Saving results image to %s", path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -275,122 +291,67 @@ class IndiCam(ImageProcessingEntity):
         )
 
 
-@dataclass
-class GaugeMeasurement:
-    """ Holds the received measurement for convenient access. """
-    body_left: int
-    body_right: int
-    body_top: int
-    body_bottom: int
-    float_top: int
-    value: float
-
-
-@dataclass
-class CamConfig:
-    """ Holds the camera configuration. """
-    min_perc: float
-    max_perc: float
-
-
-class IndiCamService:
-    """ A class that wraps the IndiCam service parameters, and provide a
-        unified post method for the image.
+class IndiCamProcessor:
+    """ A class that wraps the IndiCam service for one camera, and provide a
+        unified post method for the image. Note that the camera configuration
+        is wholly controlled from Home Assistant - when a new value is set
+        in the config, it is changed at the service as part of the startup.
     """
 
-    def __init__(self, url: str, device: str, auth_key: str) -> None:
+    def __init__(
+            self,
+            client: IndiCamServiceClient,
+            device_name: str,
+            camconfig: CamConfig
+    ) -> None:
         """ Set up the service URL and call headers. """
-        self._url = url
-        self._device = device
-        self._auth_header = {"Authorization": f"Token {auth_key}"}
+        self._device_name = device_name
+        self._api_client = client
+        self._indicam_id: int | None = None
+        self._camconfig = camconfig
+        self._updated_cam_config = False
 
-    def process_img(self, image) -> \
-            (GaugeMeasurement | None, CamConfig | None, float | None):
-        """ Process the image using the service, then fetch the measurement
-            results. Returns the measurement results, the camera configuration,
-            and the elapsed time.
+    def setup(self):
+        """ Should be called after Home Assistant completes setup. """
+        self._indicam_id = self._api_client.get_indicam_id(self._device_name)
+        self.update_cam_config()
+
+    def update_cam_config(self):
+        """ Checks to see if the update has been done yet. If so, returns
+            without changing anything. Otherwise, compares the local config to
+            the config at the service, and if they're not the same, sends the
+            local config to the service. Sets the update done flag to indicate
+            the procedure does not have to be executed again.
+        """
+        if self._updated_cam_config:
+            return
+        _LOGGER.debug(
+            "Fetching service camconfig for indicam ID=%d", self._indicam_id
+        )
+        svc_cfg = self._api_client.get_camconfig(self._indicam_id)
+        if not svc_cfg:
+            return
+        if svc_cfg == self._camconfig:
+            _LOGGER.debug('Local cam config the same as at service')
+            self._updated_cam_config = True
+            return
+        self._api_client.create_camconfig(self._indicam_id, self._camconfig)
+        self._updated_cam_config = True
+        return
+
+    def process_img(self, image) -> (GaugeMeasurement | None, float | None):
+        """ First, updates the service camera configuration if it has not
+            yet been done. Then, process the image using the service, and
+             fetch the measurement results. Returns the measurement results and
+             the elapsed time.
         """
         start = time.monotonic()
-        image_id = self._submit_image(image)
+        if not self._updated_cam_config:
+            self.update_cam_config()
+        image_id = self._api_client.upload_image(self._device_name, image)
         if not image_id:
             return None, None, time.monotonic() - start
-        measurement = self._get_measurement(image_id)
+        measurement = self._api_client.get_measurement(image_id)
         if not measurement:
             return None, None, time.monotonic() - start
-        cam_config = self._get_cam_config(image_id)
-        if not cam_config:
-            return measurement, None, time.monotonic() - start
-        return measurement, cam_config, time.monotonic() - start
-
-    def _submit_image(self, image) -> int | None:
-        """ Post the image to the service, for processing, and return the
-            image ID returned by the API, None if an error occurred.
-        """
-        response = req.post(
-            f"{self._url}/images/{self._device}/upload/",
-            data=io.BytesIO(bytearray(image)),
-            headers=self._auth_header | {"Content-type": "image/jpeg"},
-            timeout=30
-        )
-        if not response or "error" in response:
-            if "error" in response:
-                # noinspection PyUnresolvedReferences
-                _LOGGER.error(response["error"])
-            return None
-        return response.json()['image_id']
-
-    def _get_measurement(self, image_id: int) -> GaugeMeasurement | None:
-        """ Get the measurement for the submitted image. """
-        response = req.get(
-            f"{self._url}/measurements/?src_image={image_id}",
-            headers=self._auth_header,
-            timeout=30
-        )
-        if not response or response.status_code != 200:
-            _LOGGER.error(
-                "Error retrieving measurement for image %d', status=%d",
-                image_id,
-                None if not response else response.status_code
-            )
-            return None
-        result_json = response.json()[0]
-        measurement = GaugeMeasurement(
-            body_left=int(result_json['gauge_left_col']),
-            body_right=int(result_json['gauge_right_col']),
-            body_top=int(result_json['gauge_top_row']),
-            body_bottom=int(result_json['gauge_bottom_row']),
-            float_top=int(result_json['float_top_col']),
-            value=float(result_json['value'])
-        )
-        _LOGGER.debug(
-            "Measurement received left=%d, right=%d, top=%d, bottom=%d, "
-            "float=%d, value=%f",
-            measurement.body_left,
-            measurement.body_right,
-            measurement.body_top,
-            measurement.body_bottom,
-            measurement.float_top,
-            measurement.value
-        )
-        return measurement
-
-    def _get_cam_config(self, image_id: int) -> CamConfig | None:
-        """ Get the camera configuration for the specified image. """
-        response = req.get(
-            f"{self._url}/camconfigs/?images={image_id}",
-            headers=self._auth_header,
-            timeout=30
-        )
-        if not response or response.status_code != 200:
-            _LOGGER.error(
-                "Error retrieving cam config for image id=%d, status=%d",
-                image_id,
-                None if not response else response.status_code
-            )
-            return None
-        config_json = response.json()[0]
-        cam_config = CamConfig(
-            min_perc=config_json['empty_perc_from_bottom'],
-            max_perc=config_json['full_perc_from_top']
-        )
-        return cam_config
+        return measurement, time.monotonic() - start
