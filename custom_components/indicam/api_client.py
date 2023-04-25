@@ -67,7 +67,7 @@ class IndiCamServiceClient:
     def get_camconfig(self, indicam_id: int) -> CamConfig | None:
         """ Get the service's version of the camera configuration. """
         response = req.get(
-            f'{self._url}/indicams/{indicam_id}/camconfig_current',
+            f'{self._url}/indicams/{indicam_id}/camconfig_current/',
             timeout=HTTP_TIMEOUT,
             headers=self._req_header
         )
@@ -90,7 +90,7 @@ class IndiCamServiceClient:
     def create_camconfig(self, indicam_id: int, camconfig: CamConfig) -> bool:
         """ Set the camera configuration at the service. """
         response = req.post(
-            f'{self._url}/camconfigs/create',
+            f'{self._url}/camconfigs/',
             json={
                 'indicam': indicam_id,
                 CAMCONFIG_MAX_KEY: camconfig.max_perc,

@@ -10,14 +10,13 @@ import time
 from PIL import Image, ImageDraw
 import voluptuous as vol
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.image_processing import (
     PLATFORM_SCHEMA as IMGPROC_PLATFORM_SCHEMA,
-    SOURCE_SCHEMA as IMGPROC_SOURCE_SCHEMA,
     ImageProcessingEntity
 )
 from homeassistant.const import (
     CONF_DEVICE,
-    CONF_ENTITY_ID,
     CONF_NAME,
     CONF_SOURCE,
     CONF_URL,
@@ -48,7 +47,7 @@ CONF_FILE_OUT = "file_out"
 SOURCE_SCHEMA = cv.vol.Schema(
     {
         vol.Required(
-            CONF_DEVICE,
+            CONF_NAME,
             description="Device name at Indicam Service"
         ): cv.string,
         vol.Required(
@@ -84,7 +83,7 @@ PLATFORM_SCHEMA = IMGPROC_PLATFORM_SCHEMA.extend(
         ): cv.url,
         vol.Required(CONF_AUTH_KEY, description="API Authentication Token"):
             cv.string,
-        vol.Optional('indicam'): vol.All(cv.ensure_list, [SOURCE_SCHEMA]),
+        vol.Optional(CONF_DEVICE): vol.All(cv.ensure_list, [SOURCE_SCHEMA]),
     }
 )
 
@@ -105,22 +104,28 @@ async def async_setup_platform(
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, setup_service)
     entities = []
-    for camera in config['indicam']:
+    for camera in config[CONF_DEVICE]:
         cam_config = CamConfig(
             min_perc=camera[CONF_MINIMUM], max_perc=camera[CONF_MAXIMUM]
         )
-        processor = IndiCamProcessor(client, camera[CONF_DEVICE], cam_config)
+        processor = IndiCamProcessor(client, camera[CONF_NAME], cam_config)
         entities.append(
             IndiCam(
                 hass,
                 camera[CONF_SOURCE],
-                camera[CONF_DEVICE],
+                camera[CONF_NAME],
                 cam_config,
                 processor,
                 camera[CONF_FILE_OUT]
             )
         )
     add_entities(entities)
+
+
+class HausNetServiceError(Exception):
+    """ A custom exception for situations where the HausNet service is not
+        accessible.
+    """
 
 
 class IndiCam(ImageProcessingEntity):
@@ -156,7 +161,24 @@ class IndiCam(ImageProcessingEntity):
 
     async def post_hass_init_setup(self):
         """ To be called after Home Assistant has finished initializing """
-        await self.hass.async_add_executor_job(self._processor.setup)
+        await self.hass.async_add_executor_job(self.setup_processor)
+
+    def setup_processor(self):
+        """ Set up the processor after HASS has been initialized. If an error
+            occurs, notify the user.
+        """
+        try:
+            self._processor.setup()
+        except Exception as err:
+            persistent_notification.create(
+                self.hass,
+                "HausNet Indicam service connection error, please check your "
+                "<a href=\"/config/logs\">logs</a> for "
+                "details.",
+                title="HausNet service error",
+                notification_id=self._name + "_setup"
+            )
+            raise err
 
     @property
     def camera_entity(self):
@@ -322,6 +344,8 @@ class IndiCamProcessor:
             the config at the service, and if they're not the same, sends the
             local config to the service. Sets the update done flag to indicate
             the procedure does not have to be executed again.
+
+            Returns "True" if update is completed
         """
         if self._updated_cam_config:
             return
@@ -330,12 +354,22 @@ class IndiCamProcessor:
         )
         svc_cfg = self._api_client.get_camconfig(self._indicam_id)
         if not svc_cfg:
-            return
+            raise HausNetServiceError(
+                "Could not retrieve camera configuration from the"
+                "HausNet service"
+            )
         if svc_cfg == self._camconfig:
             _LOGGER.debug('Local cam config the same as at service')
             self._updated_cam_config = True
             return
-        self._api_client.create_camconfig(self._indicam_id, self._camconfig)
+        cfg_created = self._api_client.create_camconfig(
+            self._indicam_id, self._camconfig
+        )
+        if not cfg_created:
+            raise HausNetServiceError(
+                "Could not create a new camera configuration at the"
+                "HausNet service"
+            )
         self._updated_cam_config = True
         return
 
