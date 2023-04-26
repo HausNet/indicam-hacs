@@ -99,7 +99,7 @@ class IndiCamServiceClient:
             headers=self._req_header,
             timeout=HTTP_TIMEOUT
         )
-        if response.status_code != 200:
+        if response.status_code != 201:
             _LOGGER.error(
                 'Error creating camera config - status=%d, indicam_id=%d',
                 response.status_code,

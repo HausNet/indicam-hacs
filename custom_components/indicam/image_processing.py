@@ -58,14 +58,14 @@ SOURCE_SCHEMA = cv.vol.Schema(
             CONF_MINIMUM,
             default=0,
             description="Distance of empty mark from bottom of gauge body, " +
-                        "as a % of gauge body height"
-        ): cv.positive_int,
+                        "as a decimal fraction of gauge body height"
+        ): cv.positive_float,
         vol.Optional(
             CONF_MAXIMUM,
             default=0,
             description="Distance of full mark from top of gauge body, " +
-                        "as a % of gauge body height"
-        ): cv.positive_int,
+                        "as a decimal fraction of gauge body height"
+        ): cv.positive_float,
         vol.Optional(
             CONF_FILE_OUT,
             default=[],
