@@ -68,7 +68,6 @@ SOURCE_SCHEMA = cv.vol.Schema(
         ): cv.positive_float,
         vol.Optional(
             CONF_FILE_OUT,
-            default=[],
             description="Path to save decorated image to"
         ): cv.string
     }
@@ -100,7 +99,10 @@ async def async_setup_platform(
     async def setup_service(_event: Event) -> None:
         """ Synchronize camera configuration. """
         for indicam in entities:
-            await indicam.post_hass_init_setup()
+            try:
+                await indicam.post_hass_init_setup()
+            except ConnectionError:
+                _LOGGER.error("Connection error connecting to the HausNet App")
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, setup_service)
     entities = []
@@ -213,21 +215,13 @@ class IndiCam(ImageProcessingEntity):
             return
         # Save Images
         if self._last_result.value and self._file_out:
-            paths = []
-            for path_template in self._file_out:
-                if isinstance(path_template, template.Template):
-                    paths.append(
-                        path_template.render(camera_entity=self._camera_entity)
-                    )
-                else:
-                    paths.append(path_template)
-            self._save_image(image, paths)
+            self._save_image(image, self._file_out)
         self._process_time = elapsed_time
 
     def _save_image(
             self,
             image,
-            paths: [str]
+            path: str
     ) -> None:
         img = Image.open(io.BytesIO(bytearray(image))).convert("RGB")
         img_width, img_height = img.size
@@ -236,13 +230,9 @@ class IndiCam(ImageProcessingEntity):
         self._draw_scale(draw, self._last_result)
         self._draw_min_max(draw, self._last_result, self._cam_config)
         self._draw_float_line(draw, self._last_result)
-        for path in paths:
-            _LOGGER.info("Saving results image to %s", path)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            img.save(path)
-        raw_img = Image.open(io.BytesIO(bytearray(image))).convert("RGB")
-        _LOGGER.info("Saving raw image to /tmp/indicam-oil-tank-raw.jpg")
-        raw_img.save("/tmp/indicam-oil-tank-raw.jpg")
+        _LOGGER.info("Saving results image to %s", path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        img.save(path)
 
     @staticmethod
     def _draw_body(
