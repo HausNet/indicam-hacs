@@ -1,11 +1,14 @@
 {
   "domain": "indicam",
-  "name": "HausNet IndiCam - Indicator Camera Image Processing",
-  "documentation": "TODO: Link to documentation",
-  "codeowners": ["admin@hausnet.io"],
-  "issue_tracker": "https://github.com/HausNet/indicam-hacs/issues",
-  "requirements": ["pillow"],
-  "iot_class": "local_polling",
-  "loggers": ["indicam"],
-  "version": "0.0.1"
+  "name": "Indicator Camera",
+  "codeowners": ["@HausNet/indicam-client", "@liber-tas"],
+  "config_flow": false,
+  "dependencies": ["image_processing"],
+  "documentation": "https://docs.hausnet.io/indicam",
+  "homekit": {},
+  "integration_type": "device",
+  "iot_class": "cloud_polling",
+  "requirements": ["Pillow==10.0.0", "indicam_client==0.3.5"],
+  "ssdp": [],
+  "zeroconf": []
 }

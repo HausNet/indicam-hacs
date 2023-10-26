@@ -1,1 +1,1 @@
-"""The HausNet IndiCam component."""
+"""The Indicator Camera Platform."""
