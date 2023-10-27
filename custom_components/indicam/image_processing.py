@@ -320,7 +320,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
     @staticmethod
     async def _save_image(image: Image.Image | bytes, path: str) -> None:
         _LOGGER.info("Saving results image to %s", path)
-        if type(image) is bytes:
+        if isinstance(image, bytes):
             buffer = io.BytesIO(bytearray(image))
         else:
             buffer = io.BytesIO()
