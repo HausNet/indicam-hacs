@@ -14,7 +14,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, cast
+from typing import Any
 
 import aiofiles
 import aiofiles.os
@@ -324,7 +324,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             buffer = io.BytesIO(bytearray(image))
         else:
             buffer = io.BytesIO()
-            cast(Image.Image, image).save(buffer, "jpg")
+            image.save(buffer, "jpg")
         await aiofiles.os.makedirs(os.path.dirname(path), exist_ok=True)
         async with aiofiles.open(path, "wb") as file:
             await file.write(buffer.getbuffer())
