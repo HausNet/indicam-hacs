@@ -241,6 +241,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         if not measurement or not measurement.value:
             self._last_result = None
             return
+        self._last_result = measurement
         # Save Images
         if self._outfile_path:
             msr_file_path = f"{self._outfile_path}/{self._name}-measure.jpg"
@@ -257,15 +258,15 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
 
         This method must be run in the event loop.
         """
-        indicam_measurement = IndicamMeasurement(
-            measurement.body_left,
-            measurement.body_right,
-            measurement.body_top,
-            measurement.body_bottom,
-            measurement.float_top,
-            measurement.value,
-            self.entity_id,
-        )
+        indicam_measurement = {
+            "body_left": measurement.body_left,
+            "body_right": measurement.body_right,
+            "body_top": measurement.body_top,
+            "body_bottom": measurement.body_bottom,
+            "float_top": measurement.float_top,
+            "value": measurement.value,
+            "entity_id": self.entity_id,
+        }
         self.hass.bus.async_fire(INDICAM_MEASUREMENT, indicam_measurement)
 
     async def async_update(self) -> None:
@@ -323,7 +324,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             buffer = io.BytesIO(bytearray(image))
         else:
             buffer = io.BytesIO()
-            cast(Image.Image, image).save(buffer)
+            cast(Image.Image, image).save(buffer, "jpg")
         await aiofiles.os.makedirs(os.path.dirname(path), exist_ok=True)
         async with aiofiles.open(path, "wb") as file:
             await file.write(buffer.getbuffer())
@@ -436,14 +437,20 @@ class IndiCamProcessor:
         start = time.monotonic()
         if not self._updated_cam_config:
             self._update_cam_config()
-        image_id = self._api_client.upload_image(self._device_name, image)
+        image_id = await self._hass.async_add_executor_job(
+            self._api_client.upload_image, self._device_name, image
+        )
         if not image_id:
             return None, time.monotonic() - start
         for delay in MEASUREMENT_PROCESS_DELAYS:
-            if not self._api_client.measurement_ready(image_id):
+            if not await self._hass.async_add_executor_job(
+                self._api_client.measurement_ready, image_id
+            ):
                 await asyncio.sleep(delay)
                 continue
-            measurement = self._api_client.get_measurement(image_id)
+            measurement = await self._hass.async_add_executor_job(
+                self._api_client.get_measurement, image_id
+            )
             if not measurement:
                 break
             return measurement, time.monotonic() - start
