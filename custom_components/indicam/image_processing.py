@@ -324,7 +324,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             buffer = io.BytesIO(bytearray(image))
         else:
             buffer = io.BytesIO()
-            image.save(buffer, "jpg")
+            image.save(buffer, "JPEG")
         await aiofiles.os.makedirs(os.path.dirname(path), exist_ok=True)
         async with aiofiles.open(path, "wb") as file:
             await file.write(buffer.getbuffer())
