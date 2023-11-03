@@ -14,7 +14,7 @@ import io
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 import aiofiles
 import aiofiles.os
@@ -22,6 +22,7 @@ import indicam_client
 from PIL import Image, ImageDraw
 import voluptuous as vol
 
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA
 from homeassistant.components.image_processing import (
     DOMAIN as DOMAIN_IMAGE_PROCESSING,
@@ -106,8 +107,9 @@ async def async_setup_platform(
     discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
     """Set up the IndiCam platform."""
-    client = indicam_client.IndiCamServiceClient(INDICAM_URL, config[CONF_AUTH_KEY])
-    connect_status = await hass.async_add_executor_job(client.test_connect)
+    session = async_get_clientsession(hass)
+    client = indicam_client.IndiCamServiceClient(session, INDICAM_URL, config[CONF_AUTH_KEY])
+    connect_status = await client.test_connect()
     if connect_status == indicam_client.CONNECT_FAIL:
         raise PlatformNotReady(
             f"Connection failed trying to connect to client at {INDICAM_URL}"
@@ -124,17 +126,8 @@ async def async_setup_platform(
         cycle_time = dt.timedelta(seconds=camera[CONF_CYCLE_SECONDS])
         flash_entity_id = camera.get(CONF_FLASH_ENTITY_ID, None)
         outfile_path = camera.get(CONF_PATH_OUT, None)
-        try:
-            processor = await hass.async_add_executor_job(
-                IndiCamProcessor, hass, client, camera_name, cam_config
-            )
-        except ConnectionError as e:
-            raise PlatformNotReady(
-                f"Connection error while connecting to {INDICAM_URL}: {e}"
-            ) from e
-        entities.append(
-            await hass.async_add_executor_job(
-                IndiCamImageProcessingEntity,
+        processor = IndiCamProcessor(hass, client, camera_name, cam_config)
+        entities.append(IndiCamImageProcessingEntity(
                 camera_entity_id,
                 camera_name,
                 cycle_time,
@@ -196,6 +189,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         cycle timer to do this regularly.
         """
 
+        # noinspection PyUnusedLocal
         @callback
         async def scan(scantime=None):
             """Execute a scan."""
@@ -421,8 +415,7 @@ class IndiCamProcessor:
         self._device_name: str = device_name
         self._api_client: indicam_client.IndiCamServiceClient = client
         self._updated_cam_config: bool = False
-        self._indicam_id: int = self._api_client.get_indicam_id(self._device_name)
-        self._update_cam_config()
+        self._indicam_id: Optional[int] = None
 
     async def process_img(
         self, image
@@ -436,27 +429,21 @@ class IndiCamProcessor:
         """
         start = time.monotonic()
         if not self._updated_cam_config:
-            self._update_cam_config()
-        image_id = await self._hass.async_add_executor_job(
-            self._api_client.upload_image, self._device_name, image
-        )
+            await self._update_cam_config()
+        image_id = await self._api_client.upload_image(self._device_name, image)
         if not image_id:
             return None, time.monotonic() - start
         for delay in MEASUREMENT_PROCESS_DELAYS:
-            if not await self._hass.async_add_executor_job(
-                self._api_client.measurement_ready, image_id
-            ):
+            if not await self._api_client.measurement_ready(image_id):
                 await asyncio.sleep(delay)
                 continue
-            measurement = await self._hass.async_add_executor_job(
-                self._api_client.get_measurement, image_id
-            )
+            measurement = await self._api_client.get_measurement(image_id)
             if not measurement:
                 break
             return measurement, time.monotonic() - start
         return None, time.monotonic() - start
 
-    def _update_cam_config(self):
+    async def _update_cam_config(self):
         """Update the camera config at the service if needed.
 
         Checks to see if the update has been done yet. If so, returns
@@ -469,8 +456,8 @@ class IndiCamProcessor:
         """
         if self._updated_cam_config:
             return
-        _LOGGER.debug("Fetching service camconfig for indicam ID=%d", self._indicam_id)
-        svc_cfg = self._api_client.get_camconfig(self._indicam_id)
+        _LOGGER.debug("Fetching service camconfig for indicam ID=%d", await self._get_indicam_id())
+        svc_cfg = await self._api_client.get_camconfig(await self._get_indicam_id())
         if not svc_cfg:
             raise HausNetServiceError(
                 "Could not retrieve camera configuration from the service"
@@ -479,8 +466,8 @@ class IndiCamProcessor:
             _LOGGER.debug("Local cam config the same as at service")
             self._updated_cam_config = True
             return
-        cfg_created = self._api_client.create_camconfig(
-            self._indicam_id, self.cam_config
+        cfg_created = await self._api_client.create_camconfig(
+            await self._get_indicam_id(), self.cam_config
         )
         if not cfg_created:
             raise HausNetServiceError(
@@ -488,3 +475,9 @@ class IndiCamProcessor:
             )
         self._updated_cam_config = True
         return
+
+    async def _get_indicam_id(self) -> int:
+        """If the IndiCam ID has not yet been retrieved, get it."""
+        if not self._indicam_id:
+            self._indicam_id = await self._api_client.get_indicam_id(self._device_name)
+        return self._indicam_id
