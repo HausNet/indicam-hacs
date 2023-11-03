@@ -22,7 +22,6 @@ import indicam_client
 from PIL import Image, ImageDraw
 import voluptuous as vol
 
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA
 from homeassistant.components.image_processing import (
     DOMAIN as DOMAIN_IMAGE_PROCESSING,
@@ -44,6 +43,7 @@ from homeassistant.const import (
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady
 from homeassistant.helpers import template
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
@@ -108,7 +108,9 @@ async def async_setup_platform(
 ) -> None:
     """Set up the IndiCam platform."""
     session = async_get_clientsession(hass)
-    client = indicam_client.IndiCamServiceClient(session, INDICAM_URL, config[CONF_AUTH_KEY])
+    client = indicam_client.IndiCamServiceClient(
+        session, INDICAM_URL, config[CONF_AUTH_KEY]
+    )
     connect_status = await client.test_connect()
     if connect_status == indicam_client.CONNECT_FAIL:
         raise PlatformNotReady(
@@ -127,7 +129,8 @@ async def async_setup_platform(
         flash_entity_id = camera.get(CONF_FLASH_ENTITY_ID, None)
         outfile_path = camera.get(CONF_PATH_OUT, None)
         processor = IndiCamProcessor(hass, client, camera_name, cam_config)
-        entities.append(IndiCamImageProcessingEntity(
+        entities.append(
+            IndiCamImageProcessingEntity(
                 camera_entity_id,
                 camera_name,
                 cycle_time,
@@ -456,7 +459,9 @@ class IndiCamProcessor:
         """
         if self._updated_cam_config:
             return
-        _LOGGER.debug("Fetching service camconfig for indicam ID=%d", await self._get_indicam_id())
+        _LOGGER.debug(
+            "Fetching service camconfig for indicam ID=%d", await self._get_indicam_id()
+        )
         svc_cfg = await self._api_client.get_camconfig(await self._get_indicam_id())
         if not svc_cfg:
             raise HausNetServiceError(
@@ -476,7 +481,7 @@ class IndiCamProcessor:
         self._updated_cam_config = True
         return
 
-    async def _get_indicam_id(self) -> int:
+    async def _get_indicam_id(self) -> int | None:
         """If the IndiCam ID has not yet been retrieved, get it."""
         if not self._indicam_id:
             self._indicam_id = await self._api_client.get_indicam_id(self._device_name)
