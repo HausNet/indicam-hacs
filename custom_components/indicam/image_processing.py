@@ -32,7 +32,6 @@ from homeassistant.components.image_processing import (
 from homeassistant.components.switch import DOMAIN as DOMAIN_SWITCH
 from homeassistant.const import (
     ATTR_ENTITY_ID,
-    CONF_ENTITY_ID,
     CONF_MAXIMUM,
     CONF_MINIMUM,
     CONF_NAME,
@@ -53,9 +52,10 @@ from homeassistant.util.pil import draw_box
 from .const import (
     ATTR_GAUGE_MEASUREMENT,
     CONF_AUTH_KEY,
-    CONF_CAMERAS,
+    CONF_CAMERA_ENTITY_ID,
     CONF_CYCLE_SECONDS,
     CONF_FLASH_ENTITY_ID,
+    CONF_INDICAMS,
     CONF_PATH_OUT,
     FLASH_DELAY,
     INDICAM_MEASUREMENT,
@@ -69,10 +69,10 @@ SCAN_INTERVAL = dt.timedelta(days=365)
 
 _LOGGER = logging.getLogger(__name__)
 
-CAMERA_SCHEMA = vol.Schema(
+INDICAM_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME): cv.string,
-        vol.Required(CONF_ENTITY_ID): cv.entity_domain(DOMAIN_CAMERA),
+        vol.Required(CONF_CAMERA_ENTITY_ID): cv.entity_domain(DOMAIN_CAMERA),
         vol.Optional(CONF_MINIMUM, default=0): cv.positive_float,
         vol.Optional(CONF_MAXIMUM, default=0): cv.positive_float,
         vol.Optional(CONF_PATH_OUT): cv.path,
@@ -85,7 +85,7 @@ CAMERA_SCHEMA = vol.Schema(
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(CONF_AUTH_KEY): str,
-        vol.Required(CONF_CAMERAS): vol.All(cv.ensure_list, [CAMERA_SCHEMA]),
+        vol.Required(CONF_INDICAMS): vol.All(cv.ensure_list, [INDICAM_SCHEMA]),
     }
 )
 # How many times, and for how long to wait for a measurement to be made
@@ -119,20 +119,20 @@ async def async_setup_platform(
     if connect_status == indicam_client.CONNECT_AUTH_FAIL:
         raise ConfigEntryAuthFailed("Authentication failed")
     entities = []
-    for camera in config[CONF_CAMERAS]:
-        camera_name = camera[CONF_NAME]
-        camera_entity_id = camera[CONF_ENTITY_ID]
+    for indicam in config[CONF_INDICAMS]:
+        indicam_name = indicam[CONF_NAME]
+        camera_entity_id = indicam[CONF_CAMERA_ENTITY_ID]
         cam_config = indicam_client.CamConfig(
-            min_perc=camera[CONF_MINIMUM], max_perc=camera[CONF_MAXIMUM]
+            min_perc=indicam[CONF_MINIMUM], max_perc=indicam[CONF_MAXIMUM]
         )
-        cycle_time = dt.timedelta(seconds=camera[CONF_CYCLE_SECONDS])
-        flash_entity_id = camera.get(CONF_FLASH_ENTITY_ID, None)
-        outfile_path = camera.get(CONF_PATH_OUT, None)
-        processor = IndiCamProcessor(hass, client, camera_name, cam_config)
+        cycle_time = dt.timedelta(seconds=indicam[CONF_CYCLE_SECONDS])
+        flash_entity_id = indicam.get(CONF_FLASH_ENTITY_ID, None)
+        outfile_path = indicam.get(CONF_PATH_OUT, None)
+        processor = IndiCamProcessor(hass, client, indicam_name, cam_config)
         entities.append(
             IndiCamImageProcessingEntity(
+                indicam_name,
                 camera_entity_id,
-                camera_name,
                 cycle_time,
                 flash_entity_id,
                 outfile_path,
@@ -166,8 +166,8 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
 
     def __init__(
         self,
-        camera_entity_id: str,
         name: str,
+        camera_entity_id: str,
         cycle_time: dt.timedelta,
         flash_entity_id: str,
         outfile_path: str,
