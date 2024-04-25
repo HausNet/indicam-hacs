@@ -1,7 +1,6 @@
 {
   "domain": "indicam",
   "name": "Indicator Camera",
-  "version": "1.0b2",
   "codeowners": ["@HausNet/indicam-client", "@liber-tas"],
   "config_flow": false,
   "dependencies": ["image_processing"],
@@ -9,7 +8,11 @@
   "homekit": {},
   "integration_type": "device",
   "iot_class": "cloud_polling",
-  "requirements": ["Pillow==10.2.0", "indicam_client==1.0.2"],
+  "requirements": [
+    "Pillow==10.3.0",
+    "indicam_client==1.0.2",
+    "aiofiles==23.2.*"
+  ],
   "ssdp": [],
   "zeroconf": []
 }
