@@ -14,7 +14,7 @@ import io
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 import aiofiles
 import aiofiles.os
@@ -295,6 +295,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             DOMAIN_SWITCH,
             SERVICE_TURN_ON if on else SERVICE_TURN_OFF,
             {ATTR_ENTITY_ID: self._flash_entity_id},
+            blocking=True,
         )
         if on:
             await asyncio.sleep(FLASH_DELAY)
@@ -418,7 +419,7 @@ class IndiCamProcessor:
         self._device_name: str = device_name
         self._api_client: indicam_client.IndiCamServiceClient = client
         self._updated_cam_config: bool = False
-        self._indicam_id: Optional[int] = None
+        self._indicam_id: int | None = None
 
     async def process_img(
         self, image
