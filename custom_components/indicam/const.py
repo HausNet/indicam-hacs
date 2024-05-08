@@ -3,7 +3,7 @@ import os
 
 DOMAIN = "indicam"
 # Seconds to wait between turning flash on and capturing image
-FLASH_DELAY = 1
+FLASH_DELAY = 5
 # Measurement event
 INDICAM_MEASUREMENT = "image_processing.indicam_measurement"
 # Indicam Service URL
