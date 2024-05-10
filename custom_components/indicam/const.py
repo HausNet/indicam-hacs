@@ -1,9 +1,10 @@
 """Constants for the Indicator Camera integration."""
+
 import os
 
 DOMAIN = "indicam"
 # Seconds to wait between turning flash on and capturing image
-FLASH_DELAY = 5
+FLASH_DELAY_SECONDS = 60
 # Measurement event
 INDICAM_MEASUREMENT = "image_processing.indicam_measurement"
 # Indicam Service URL

@@ -38,6 +38,7 @@ from homeassistant.const import (
     EVENT_HOMEASSISTANT_STARTED,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
+    STATE_ON,
 )
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady
@@ -57,7 +58,7 @@ from .const import (
     CONF_FLASH_ENTITY_ID,
     CONF_INDICAMS,
     CONF_PATH_OUT,
-    FLASH_DELAY,
+    FLASH_DELAY_SECONDS,
     INDICAM_MEASUREMENT,
     INDICAM_URL,
     OIL_CAM_CYCLE_SECONDS_DEFAULT,
@@ -139,6 +140,7 @@ async def async_setup_platform(
                 processor,
             )
         )
+
     async_add_entities(entities)
 
     async def start_cycles(_event: Event) -> None:
@@ -179,6 +181,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         self._camera_entity_id = camera_entity_id
         self._cycle_time = cycle_time
         self._flash_entity_id = flash_entity_id
+        self._flash_on = False
         self._outfile_path = outfile_path
         self._processor = processor
         self._last_result: indicam_client.GaugeMeasurement | None = None
@@ -283,22 +286,44 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         await super().async_update()
         await self._turn_flash_on(False)
 
-    async def _turn_flash_on(self, on: bool) -> None:
+    async def _turn_flash_on(self, on: bool) -> bool:
         """Control the flash, if present.
 
-        Turn flash on (on=True) or off (on=False). Sleeps for a short period
-        to allow the flash to reach full brightness.
+        Turn flash on (on=True) or off (on=False). Waits for the flash state
+        to change to "on" while sleeping for a period of FLASH_DELAY_SECONDS seconds.
+
+        If, at the end, the flash has not yet been turned on, return False,
+        otherwise return True.
         """
         if not self._flash_entity_id:
-            return
+            return True
         await self.hass.services.async_call(
             DOMAIN_SWITCH,
             SERVICE_TURN_ON if on else SERVICE_TURN_OFF,
             {ATTR_ENTITY_ID: self._flash_entity_id},
             blocking=True,
         )
-        if on:
-            await asyncio.sleep(FLASH_DELAY)
+        if not on:
+            _LOGGER.debug("Flash turned off")
+            return True
+        _LOGGER.debug("Waiting for flash to turn on")
+        wait_seconds = 0
+        while wait_seconds < FLASH_DELAY_SECONDS:
+            flash_state = self.hass.states.get(self._flash_entity_id)
+            if not flash_state:
+                return False
+            _LOGGER.debug(
+                "Flash state is %s, %d seconds passed", flash_state.state, wait_seconds
+            )
+            if flash_state.state == STATE_ON:
+                break
+            await asyncio.sleep(1)
+            wait_seconds += 1
+        if wait_seconds > FLASH_DELAY_SECONDS:
+            _LOGGER.error("Flash did not turn on after %d seconds", wait_seconds)
+            return False
+        _LOGGER.info("Flash turned on after %d seconds", wait_seconds)
+        return True
 
     def _decorate_image(self, image):
         """Decorate the image with extracted data.
