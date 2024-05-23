@@ -22,7 +22,7 @@ import indicam_client
 from PIL import Image, ImageDraw
 import voluptuous as vol
 
-from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA
+from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA, async_get_image
 from homeassistant.components.image_processing import (
     DOMAIN as DOMAIN_IMAGE_PROCESSING,
     PLATFORM_SCHEMA,
@@ -41,7 +41,7 @@ from homeassistant.const import (
     STATE_ON,
 )
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady, HomeAssistantError
 from homeassistant.helpers import template
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
@@ -67,6 +67,8 @@ from .const import (
 
 # Effectively disable automatic scanning
 SCAN_INTERVAL = dt.timedelta(days=365)
+# Number of times to retry image capture
+IMAGE_GET_RETRIES = 3
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,21 +236,25 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         return {ATTR_GAUGE_MEASUREMENT: self._last_result}
 
     async def async_process_image(self, image: bytes) -> None:
-        """Process the given image."""
+        """Saves the image as a snapshot, and process it. If a result was obtained,
+           creates a decorated image showing the measurements, and saves it.
+        """
         _LOGGER.info("Processing oil tank image")
         # Send the image for processing
         measurement, elapsed_time = await self._processor.process_img(image)
-        if not measurement or not measurement.value:
-            self._last_result = None
-            return
-        self._last_result = measurement
-        # Save Images
+        failed = not measurement or not measurement.value
+        self._last_result = None if failed else measurement
+        # Save the decorated image showing the measurements
         if self._outfile_path:
-            msr_file_path = f"{self._outfile_path}/{self._name}-measure.jpg"
-            await self._save_image(self._decorate_image(image), msr_file_path)
             snap_file_path = f"{self._outfile_path}/{self._name}-snapshot.jpg"
             await self._save_image(image, snap_file_path)
-        self._last_result = measurement
+            msr_file_path = f"{self._outfile_path}/{self._name}-measure.jpg"
+            await self._save_image(
+                None if failed else self._decorate_image(image), msr_file_path
+            )
+        if failed:
+            _LOGGER.error("Failed to process oil tank image")
+            return
         await self._async_post_measurement_event(measurement)
 
     async def _async_post_measurement_event(
@@ -268,6 +274,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             "entity_id": self.entity_id,
         }
         self.hass.bus.async_fire(INDICAM_MEASUREMENT, indicam_measurement)
+        _LOGGER.debug("Indicam Measurement: %d", int(indicam_measurement["value"]*100))
 
     async def async_update(self) -> None:
         """Turn the flash on, and initiate an image processing.
@@ -275,16 +282,35 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         Grabs an image and passes it on to processing. Turns the flash
         on and off around image capture (if a flash was defined). Steps:
             1. If a flash is defined for the camera, turn it on
-            2. Wait FLASH_DELAY seconds for flash to turn on and reach full
-               brightness.
-        Then, via grab_and_process_image:
-            3. Grab an image via the parent async_update.
+            2. Grab an image (copied from image_processing component).
             4. Turn the flash off
             5. Pass the image to processing.
         """
+        if self.camera_entity is None:
+            _LOGGER.error(
+                "No camera entity id was set by the image processing entity",
+            )
+            return
+
         await self._turn_flash_on(True)
-        await super().async_update()
+        get_count = 1
+        image = None
+        while get_count <= IMAGE_GET_RETRIES:
+            try:
+                image = await async_get_image(
+                    self.hass, self.camera_entity, timeout=self.timeout
+                )
+            except HomeAssistantError as err:
+                _LOGGER.warning(
+                    "Error number %d on receive image from entity: %s", get_count, err
+                )
+            get_count += 1
         await self._turn_flash_on(False)
+
+        if not image:
+            _LOGGER.error("No image was received, aborting capture.")
+            return
+        await self.async_process_image(image.content)
 
     async def _turn_flash_on(self, on: bool) -> bool:
         """Control the flash, if present.
@@ -341,14 +367,17 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         return img
 
     @staticmethod
-    async def _save_image(image: Image.Image | bytes, path: str) -> None:
+    async def _save_image(image: Image.Image | bytes | None, path: str) -> None:
+        """Saves an image in the given location. If the image is 'None', deletes the file instead."""
         _LOGGER.info("Saving results image to %s", path)
+        await aiofiles.os.makedirs(os.path.dirname(path), exist_ok=True)
+        if image is None:
+            await aiofiles.os.remove(path)
         if isinstance(image, bytes):
             buffer = io.BytesIO(bytearray(image))
         else:
             buffer = io.BytesIO()
             image.save(buffer, "JPEG")
-        await aiofiles.os.makedirs(os.path.dirname(path), exist_ok=True)
         async with aiofiles.open(path, "wb") as file:
             await file.write(buffer.getbuffer())
 
