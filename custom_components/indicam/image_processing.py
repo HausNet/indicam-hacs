@@ -490,6 +490,7 @@ class IndiCamProcessor:
             await self._update_cam_config()
         image_id = await self._api_client.upload_image(self._device_name, image)
         if not image_id:
+            _LOGGER.error("Image upload failed, no image ID returned")
             return None, time.monotonic() - start
         for delay in MEASUREMENT_PROCESS_DELAYS:
             if not await self._api_client.measurement_ready(image_id):
@@ -499,6 +500,10 @@ class IndiCamProcessor:
             if not measurement:
                 break
             return measurement, time.monotonic() - start
+        _LOGGER.error(
+            "Timed out waiting to retrieve measurement results for: image_id=%d",
+            image_id
+        )
         return None, time.monotonic() - start
 
     async def _update_cam_config(self):
