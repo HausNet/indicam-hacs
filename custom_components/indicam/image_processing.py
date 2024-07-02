@@ -6,23 +6,19 @@ sensor values via the IndiCam image processing service.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 import datetime as dt
-import io
 import logging
-import os
-import time
 from typing import Any
 
-import aiofiles
-import aiofiles.os
-import indicam_client
-from PIL import Image, ImageDraw
 import voluptuous as vol
+import indicam_client
 
-from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA, async_get_image
+from homeassistant.components import persistent_notification
+from . import setup_component_state, get_component_state
+
+from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA, Image
 from homeassistant.components.image_processing import (
     DOMAIN as DOMAIN_IMAGE_PROCESSING,
     PLATFORM_SCHEMA,
@@ -36,19 +32,14 @@ from homeassistant.const import (
     CONF_MINIMUM,
     CONF_NAME,
     EVENT_HOMEASSISTANT_STARTED,
-    SERVICE_TURN_OFF,
-    SERVICE_TURN_ON,
-    STATE_ON,
 )
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, PlatformNotReady, HomeAssistantError
-from homeassistant.helpers import template
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
-from homeassistant.util.pil import draw_box
+
+from .indicator_processors import VerticalFloatProcessor, VerticalFloatDecorator, ImageGrabber
 
 from .const import (
     ATTR_GAUGE_MEASUREMENT,
@@ -58,17 +49,13 @@ from .const import (
     CONF_FLASH_ENTITY_ID,
     CONF_INDICAMS,
     CONF_PATH_OUT,
-    FLASH_DELAY_SECONDS,
     INDICAM_MEASUREMENT,
-    INDICAM_URL,
-    OIL_CAM_CYCLE_SECONDS_DEFAULT,
-    OIL_CAM_CYCLE_SECONDS_MINIMUM,
+    VERTICAL_FLOAT_DEFAULT_SCAN_SECONDS,
+    VERTICAL_FLOAT_MIN_SCAN_SECONDS,
 )
 
 # Effectively disable automatic scanning
 SCAN_INTERVAL = dt.timedelta(days=365)
-# Number of times to retry image capture
-IMAGE_GET_RETRIES = 3
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,8 +68,8 @@ INDICAM_SCHEMA = vol.Schema(
         vol.Optional(CONF_PATH_OUT): cv.path,
         vol.Optional(CONF_FLASH_ENTITY_ID): cv.entity_domain(DOMAIN_SWITCH),
         vol.Optional(
-            CONF_CYCLE_SECONDS, default=OIL_CAM_CYCLE_SECONDS_DEFAULT
-        ): vol.All(vol.Coerce(int), vol.Range(min=OIL_CAM_CYCLE_SECONDS_MINIMUM)),
+            CONF_CYCLE_SECONDS, default=VERTICAL_FLOAT_DEFAULT_SCAN_SECONDS
+        ): vol.All(vol.Coerce(int), vol.Range(min=VERTICAL_FLOAT_MIN_SCAN_SECONDS)),
     }
 )
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
@@ -91,8 +78,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_INDICAMS): vol.All(cv.ensure_list, [INDICAM_SCHEMA]),
     }
 )
-# How many times, and for how long to wait for a measurement to be made
-MEASUREMENT_PROCESS_DELAYS = [1, 5, 25, 60, 90]
 
 
 @dataclass
@@ -104,23 +89,28 @@ class IndicamMeasurement(indicam_client.GaugeMeasurement):
 
 # noinspection PyUnusedLocal
 async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
+        hass: HomeAssistant,
+        config: ConfigType,
+        async_add_entities: AddEntitiesCallback,
+        discovery_info: DiscoveryInfoType | None = None,
 ) -> None:
-    """Set up the IndiCam platform."""
-    session = async_get_clientsession(hass)
-    client = indicam_client.IndiCamServiceClient(
-        session, INDICAM_URL, config[CONF_AUTH_KEY]
-    )
-    connect_status = await client.test_connect()
-    if connect_status == indicam_client.CONNECT_FAIL:
-        raise PlatformNotReady(
-            f"Connection failed trying to connect to client at {INDICAM_URL}"
+    """Set up the IndiCam image processing platform.
+
+       Setting up the client through the component setup is a bridge to allow the current config
+       to continue working.
+    """
+    if not get_component_state():
+        await setup_component_state(hass, config[CONF_AUTH_KEY])
+        persistent_notification.async_create(
+            hass,
+            (
+                'The IndiCam image processing platform used its own configuration for the component. '
+                'Please create an Indicam component configuration instead, and switch from the image_processing '
+                'platform to the <a href="https://docs.hausnet.io/indicam/#install-and-configure-the-indicam-platform">'
+                'sensor platform</a>.'
+            ),
+            title="Please re-configure IndiCam"
         )
-    if connect_status == indicam_client.CONNECT_AUTH_FAIL:
-        raise ConfigEntryAuthFailed("Authentication failed")
     entities = []
     for indicam in config[CONF_INDICAMS]:
         indicam_name = indicam[CONF_NAME]
@@ -131,9 +121,10 @@ async def async_setup_platform(
         cycle_time = dt.timedelta(seconds=indicam[CONF_CYCLE_SECONDS])
         flash_entity_id = indicam.get(CONF_FLASH_ENTITY_ID, None)
         outfile_path = indicam.get(CONF_PATH_OUT, None)
-        processor = IndiCamProcessor(hass, client, indicam_name, cam_config)
+        processor = VerticalFloatProcessor(hass, get_component_state().api_client, indicam_name, cam_config)
         entities.append(
             IndiCamImageProcessingEntity(
+                hass,
                 indicam_name,
                 camera_entity_id,
                 cycle_time,
@@ -151,14 +142,10 @@ async def async_setup_platform(
         After startup is done, set the timers running for the indicam image
         processing.
         """
-        for indicam in entities:
-            await indicam.start_cycle()
+        for indicam_imgproc in entities:
+            await indicam_imgproc.start_cycle()
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, start_cycles)
-
-
-class HausNetServiceError(Exception):
-    """An exception for client exceptions."""
 
 
 # Simplify definition of calling a function after a delay
@@ -169,26 +156,23 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
     """Wrap a camera as an IndiCam."""
 
     def __init__(
-        self,
-        name: str,
-        camera_entity_id: str,
-        cycle_time: dt.timedelta,
-        flash_entity_id: str,
-        outfile_path: str,
-        processor: IndiCamProcessor,
+            self,
+            hass: HomeAssistant,
+            name: str,
+            camera_entity_id: str,
+            cycle_time: dt.timedelta,
+            flash_entity_id: str,
+            outfile_path: str,
+            processor: VerticalFloatProcessor
     ) -> None:
         """Initialize a processor entity for a camera."""
-        self._camera_entity_id = camera_entity_id
         self._name = name
         self._camera_entity_id = camera_entity_id
         self._cycle_time = cycle_time
-        self._flash_entity_id = flash_entity_id
-        self._flash_on = False
-        self._outfile_path = outfile_path
         self._processor = processor
         self._last_result: indicam_client.GaugeMeasurement | None = None
-        self._enabled = False
-        template.attach(self.hass, self._outfile_path)
+        self._decorator = VerticalFloatDecorator(hass, outfile_path, name)
+        self._grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
 
     async def start_cycle(self):
         """Process first image, then get cycling going.
@@ -235,7 +219,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         """Return device specific state attributes."""
         return {ATTR_GAUGE_MEASUREMENT: self._last_result}
 
-    async def async_process_image(self, image: bytes) -> None:
+    async def async_process_image(self, image: Image) -> None:
         """Saves the image as a snapshot, and process it. If a result was obtained,
            creates a decorated image showing the measurements, and saves it.
         """
@@ -245,20 +229,16 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         failed = not measurement or not measurement.value
         self._last_result = None if failed else measurement
         # Save the decorated image showing the measurements
-        if self._outfile_path:
-            snap_file_path = f"{self._outfile_path}/{self._name}-snapshot.jpg"
-            await self._save_image(image, snap_file_path)
-            msr_file_path = f"{self._outfile_path}/{self._name}-measure.jpg"
-            await self._save_image(
-                None if failed else self._decorate_image(image), msr_file_path
-            )
+        await self._decorator.decorate_and_save(
+            image, self._last_result if not failed else None, self._processor.cam_config
+        )
         if failed:
             _LOGGER.error("Failed to process oil tank image")
             return
         await self._async_post_measurement_event(measurement)
 
     async def _async_post_measurement_event(
-        self, measurement: indicam_client.GaugeMeasurement
+            self, measurement: indicam_client.GaugeMeasurement
     ) -> None:
         """Send event with measurement and entity ID, and, store data.
 
@@ -274,7 +254,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             "entity_id": self.entity_id,
         }
         self.hass.bus.async_fire(INDICAM_MEASUREMENT, indicam_measurement)
-        _LOGGER.debug("Indicam Measurement: %d", int(indicam_measurement["value"]*100))
+        _LOGGER.debug("Indicam Measurement: %d", int(indicam_measurement["value"] * 100))
 
     async def async_update(self) -> None:
         """Turn the flash on, and initiate an image processing.
@@ -286,263 +266,7 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
             4. Turn the flash off
             5. Pass the image to processing.
         """
-        if self.camera_entity is None:
-            _LOGGER.error(
-                "No camera entity id was set by the image processing entity",
-            )
-            return
-
-        await self._turn_flash_on(True)
-        get_count = 1
-        image = None
-        while get_count <= IMAGE_GET_RETRIES:
-            try:
-                image = await async_get_image(
-                    self.hass, self.camera_entity, timeout=self.timeout
-                )
-            except HomeAssistantError as err:
-                _LOGGER.warning(
-                    "Error number %d on receive image from entity: %s", get_count, err
-                )
-            get_count += 1
-        await self._turn_flash_on(False)
-
+        image = await self._grabber.grab_image()
         if not image:
-            _LOGGER.error("No image was received, aborting capture.")
             return
         await self.async_process_image(image.content)
-
-    async def _turn_flash_on(self, on: bool) -> bool:
-        """Control the flash, if present.
-
-        Turn flash on (on=True) or off (on=False). Waits for the flash state
-        to change to "on" while sleeping for a period of FLASH_DELAY_SECONDS seconds.
-
-        If, at the end, the flash has not yet been turned on, return False,
-        otherwise return True.
-        """
-        if not self._flash_entity_id:
-            return True
-        await self.hass.services.async_call(
-            DOMAIN_SWITCH,
-            SERVICE_TURN_ON if on else SERVICE_TURN_OFF,
-            {ATTR_ENTITY_ID: self._flash_entity_id},
-            blocking=True,
-        )
-        if not on:
-            _LOGGER.debug("Flash turned off")
-            return True
-        _LOGGER.debug("Waiting for flash to turn on")
-        wait_seconds = 0
-        while wait_seconds < FLASH_DELAY_SECONDS:
-            flash_state = self.hass.states.get(self._flash_entity_id)
-            if not flash_state:
-                return False
-            _LOGGER.debug(
-                "Flash state is %s, %d seconds passed", flash_state.state, wait_seconds
-            )
-            if flash_state.state == STATE_ON:
-                break
-            await asyncio.sleep(1)
-            wait_seconds += 1
-        if wait_seconds > FLASH_DELAY_SECONDS:
-            _LOGGER.error("Flash did not turn on after %d seconds", wait_seconds)
-            return False
-        _LOGGER.info("Flash turned on after %d seconds", wait_seconds)
-        return True
-
-    def _decorate_image(self, image):
-        """Decorate the image with extracted data.
-
-        Draw lines on the image showing the scale, camera configuration,
-        and measurements.
-        """
-        img = Image.open(io.BytesIO(bytearray(image))).convert("RGB")
-        img_width, img_height = img.size
-        draw = ImageDraw.Draw(img)
-        self._draw_body(draw, img_height, img_width, self._last_result)
-        self._draw_scale(draw, self._last_result)
-        self._draw_min_max(draw, self._last_result, self._processor.cam_config)
-        self._draw_float_line(draw, self._last_result)
-        return img
-
-    @staticmethod
-    async def _save_image(image: Image.Image | bytes | None, path: str) -> None:
-        """Saves an image in the given location. If the image is 'None', deletes the file instead."""
-        _LOGGER.info("Saving results image to %s", path)
-        await aiofiles.os.makedirs(os.path.dirname(path), exist_ok=True)
-        if image is None:
-            await aiofiles.os.remove(path)
-        if isinstance(image, bytes):
-            buffer = io.BytesIO(bytearray(image))
-        else:
-            buffer = io.BytesIO()
-            image.save(buffer, "JPEG")
-        async with aiofiles.open(path, "wb") as file:
-            await file.write(buffer.getbuffer())
-
-    @staticmethod
-    def _draw_body(
-        draw: ImageDraw.ImageDraw,
-        img_height: int,
-        img_width: int,
-        msr: indicam_client.GaugeMeasurement,
-    ) -> None:
-        """Draw the (estimated) borders of the gauge body. Drawn in yellow."""
-        top = msr.body_top / img_height
-        left = msr.body_left / img_width
-        bottom = msr.body_bottom / img_height
-        right = msr.body_right / img_width
-        box = (top, left, bottom, right)
-        draw_box(draw, box, img_width, img_height, color=(255, 255, 0))
-
-    @staticmethod
-    def _draw_scale(
-        draw: ImageDraw.ImageDraw, msr: indicam_client.GaugeMeasurement
-    ) -> None:
-        """Draw a scale on the image to guide the setting of offsets.
-
-        Draw a scale with a mark at every 10% of the gauge height
-        down the left hand side of the gauge.
-        """
-        height = msr.body_bottom - msr.body_top + 1
-        width = msr.body_right - msr.body_left + 1
-        mark_width = 0.1 * width
-        for perc_mark in range(0, 101, 10):
-            mark_loc = round(msr.body_top + height * perc_mark / 100)
-            line = [(msr.body_left - mark_width, mark_loc), (msr.body_left, mark_loc)]
-            draw.line(line, width=10, fill=(255, 255, 0))
-
-    @staticmethod
-    def _draw_min_max(
-        draw: ImageDraw.ImageDraw,
-        msr: indicam_client.GaugeMeasurement,
-        cam_conf: indicam_client.CamConfig,
-    ) -> None:
-        """Draw the min and max measurement lines.
-
-        Lines are drawn in the same color as the float measurement line, at
-        the specified offset percentages from the top and the bottom..
-        """
-        height = msr.body_bottom - msr.body_top
-        max_row = msr.body_top + cam_conf.max_perc * height
-        min_row = msr.body_bottom - cam_conf.min_perc * height
-        draw.line(
-            [(msr.body_left, max_row), (msr.body_right, max_row)],
-            width=10,
-            fill=(255, 0, 0),
-        )
-        draw.line(
-            [(msr.body_left, min_row), (msr.body_right, min_row)],
-            width=10,
-            fill=(255, 0, 0),
-        )
-
-    @staticmethod
-    def _draw_float_line(
-        draw: ImageDraw.ImageDraw, msr: indicam_client.GaugeMeasurement
-    ) -> None:
-        """Mark the float position.
-
-        Draw the float measurement line on the image being constructed.
-        Drawn in red.
-        """
-        line = [(msr.body_left, msr.float_top), (msr.body_right, msr.float_top)]
-        draw.line(line, width=10, fill=(255, 0, 0))
-
-
-class IndiCamProcessor:
-    """Wraps processing the image via the IndiCam client.
-
-    A class that wraps the IndiCam service for one camera, and provide a
-    unified post method for the image. Note that the camera configuration
-    is wholly controlled from Home Assistant - when a new value is set
-    in the config, it is changed at the service as part of the startup.
-    """
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        client: indicam_client.IndiCamServiceClient,
-        device_name: str,
-        camconfig: indicam_client.CamConfig,
-    ) -> None:
-        """Set up the service URL and call headers."""
-        self.cam_config = camconfig
-        self._hass = hass
-        self._device_name: str = device_name
-        self._api_client: indicam_client.IndiCamServiceClient = client
-        self._updated_cam_config: bool = False
-        self._indicam_id: int | None = None
-
-    async def process_img(
-        self, image
-    ) -> tuple[indicam_client.GaugeMeasurement | None, float | None]:
-        """Send the image to the service, and fetch the result afterward.
-
-        First, updates the service camera configuration if it has not
-        yet been done. Then, process the image using the service, and
-        fetch the measurement results. Returns the measurement results and
-        the elapsed time.
-        """
-        start = time.monotonic()
-        if not self._updated_cam_config:
-            await self._update_cam_config()
-        image_id = await self._api_client.upload_image(self._device_name, image)
-        if not image_id:
-            _LOGGER.error("Image upload failed, no image ID returned")
-            return None, time.monotonic() - start
-        for delay in MEASUREMENT_PROCESS_DELAYS:
-            if not await self._api_client.measurement_ready(image_id):
-                await asyncio.sleep(delay)
-                continue
-            measurement = await self._api_client.get_measurement(image_id)
-            if not measurement:
-                break
-            return measurement, time.monotonic() - start
-        _LOGGER.error(
-            "Timed out waiting to retrieve measurement results for: image_id=%d",
-            image_id
-        )
-        return None, time.monotonic() - start
-
-    async def _update_cam_config(self):
-        """Update the camera config at the service if needed.
-
-        Checks to see if the update has been done yet. If so, returns
-        without changing anything. Otherwise, compares the local config to
-        the config at the service, and if they're not the same, sends the
-        local config to the service. Sets the update done flag to indicate
-        the procedure does not have to be executed again.
-
-        Returns "True" if update is completed
-        """
-        if self._updated_cam_config:
-            return
-        _LOGGER.debug(
-            "Fetching service camconfig for indicam ID=%d", await self._get_indicam_id()
-        )
-        svc_cfg = await self._api_client.get_camconfig(await self._get_indicam_id())
-        if not svc_cfg:
-            raise HausNetServiceError(
-                "Could not retrieve camera configuration from the service"
-            )
-        if svc_cfg == self.cam_config:
-            _LOGGER.debug("Local cam config the same as at service")
-            self._updated_cam_config = True
-            return
-        cfg_created = await self._api_client.create_camconfig(
-            await self._get_indicam_id(), self.cam_config
-        )
-        if not cfg_created:
-            raise HausNetServiceError(
-                "Could not create a new camera configuration at the service"
-            )
-        self._updated_cam_config = True
-        return
-
-    async def _get_indicam_id(self) -> int | None:
-        """If the IndiCam ID has not yet been retrieved, get it."""
-        if not self._indicam_id:
-            self._indicam_id = await self._api_client.get_indicam_id(self._device_name)
-        return self._indicam_id
