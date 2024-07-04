@@ -1,7 +1,7 @@
 {
   "domain": "indicam",
   "name": "Indicator Camera",
-  "version": "1.0b14",
+  "version": "1.0b15",
   "codeowners": ["@HausNet/indicam-client", "@liber-tas"],
   "config_flow": false,
   "dependencies": ["image_processing"],
