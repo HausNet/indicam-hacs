@@ -29,7 +29,6 @@ ATTR_TOTAL_MATCHES = "total_matches"
 ATTR_SUMMARY = "summary"
 
 # Configuration keys
-CONF_ADD_ANOTHER = "add_another"
 CONF_AUTH_KEY = "auth_key"
 CONF_CLIENT_API_KEY = "client_api_key"
 CONF_INDICAMS = "indicams"
@@ -37,4 +36,5 @@ CONF_CYCLE_SECONDS = "cycle_seconds"
 CONF_CAMERA_ENTITY_ID = "camera_entity_id"
 CONF_FLASH_ENTITY_ID = "flash_entity_id"
 CONF_PATH_OUT = "path_out"
+CONF_SERVICE_DEVICE = "service_device"
 

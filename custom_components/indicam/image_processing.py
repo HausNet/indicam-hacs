@@ -269,4 +269,4 @@ class IndiCamImageProcessingEntity(ImageProcessingEntity):
         image = await self._grabber.grab_image()
         if not image:
             return
-        await self.async_process_image(image.content)
+        await self.async_process_image(image)

@@ -36,6 +36,7 @@ from .const import (
     ATTR_GAUGE_MEASUREMENT,
     CONF_CAMERA_ENTITY_ID,
     CONF_FLASH_ENTITY_ID,
+    CONF_SERVICE_DEVICE,
     VERTICAL_FLOAT_DEFAULT_SCAN_SECONDS,
     VERTICAL_FLOAT_MIN_SCAN_SECONDS,
 )
@@ -65,13 +66,17 @@ VERTICAL_FLOAT_SCHEMA = vol.Schema(
     }
 )
 
+##
 # The platform configuration schema. There is only one sensor type - the vertical float, so this is the only
 # configuration possible. When other types of sensors are added, the different schemas should be wrapped in
 # vol.Any(), with each schema having a vol.In([SENSOR_TYPE]) to key the sub-schema.
+#
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
-        # The nome of the sensor - used to name the saved images
+        # The nome of the sensor identifying it in Home Assistant
         vol.Required(CONF_NAME): cv.string,
+        # The device name representing this sensor at the service. Used to name saved images too.
+        vol.Required(CONF_SERVICE_DEVICE): cv.string,
         # The entity ID of the camera to get input images from
         vol.Required(CONF_CAMERA_ENTITY_ID): cv.entity_domain(DOMAIN_CAMERA),
         # The entity ID of a switch controlling a flash (e.g. on-board LED)
@@ -90,16 +95,17 @@ async def async_setup_platform(
     if CONF_SENSOR_TYPE not in config or config[CONF_SENSOR_TYPE] != SensorType.VERTICAL_FLOAT:
         _LOGGER.error("Sensor type is not vertical float")
         return
-    indicam_name = config[CONF_NAME]
+    name = config[CONF_NAME]
+    service_device = config[CONF_SERVICE_DEVICE]
     camera_entity_id = config[CONF_CAMERA_ENTITY_ID]
     cam_config = indicam_client.CamConfig(
         min_perc=config[CONF_MINIMUM], max_perc=config[CONF_MAXIMUM]
     )
     flash_entity_id = config.get(CONF_FLASH_ENTITY_ID, None)
-    processor = VerticalFloatProcessor(hass, get_component_state().api_client, indicam_name, cam_config)
-    decorator = VerticalFloatDecorator(hass, get_component_state().out_path, indicam_name)
+    processor = VerticalFloatProcessor(hass, get_component_state().api_client, service_device, cam_config)
+    decorator = VerticalFloatDecorator(hass, get_component_state().out_path, service_device)
     grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
-    entity = IndiCamSensorEntity(indicam_name, grabber, processor, decorator)
+    entity = IndiCamSensorEntity(service_device, grabber, processor, decorator)
     async_add_entities([entity,])
 
 
