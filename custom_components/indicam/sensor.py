@@ -105,7 +105,7 @@ async def async_setup_platform(
     processor = VerticalFloatProcessor(hass, get_component_state().api_client, service_device, cam_config)
     decorator = VerticalFloatDecorator(hass, get_component_state().out_path, service_device)
     grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
-    entity = IndiCamSensorEntity(service_device, grabber, processor, decorator)
+    entity = IndiCamSensorEntity(name, grabber, processor, decorator)
     async_add_entities([entity,])
 
 
