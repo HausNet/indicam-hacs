@@ -1,21 +1,36 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "Device is already configured"
-        },
-        "error": {
-            "cannot_connect": "Failed to connect",
-            "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error"
-        },
-        "step": {
-            "user": {
-                "data": {
-                    "host": "Host",
-                    "password": "Password",
-                    "username": "Username"
-                }
-            }
+  "config": {
+    "error": {
+      "connect": "Connection to service failed",
+      "invalid_auth": "Service authentication failed, verify token",
+      "permission": "Permission denied for output path",
+      "not_allowed": "Output path not in 'allowlist_external_dirs' in configuration.yaml"
+    },
+    "step": {
+      "user": {
+        "title": "Service Configuration",
+        "data": {
+          "client_api_key": "Client API key",
+          "path_out": "Output path for images"
         }
+      },
+      "sensor": {
+        "title": "Sensor Configuration",
+        "data": {
+          "platform": "Platform",
+          "name": "Name",
+          "service_device": "Device Name at Service",
+          "camera_entity_id": "Camera Entity",
+          "flash_entity_id": "Flash Switch Entity",
+          "sensor_type": "Sensor Type",
+          "maximum": "Max Fill Line Distance from Top (as % of Height)",
+          "minimum": "Min Fill Line Distance from Bottom (as % of Height)",
+          "scan_interval": "Scan Interval (Hours)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
     }
+  }
 }

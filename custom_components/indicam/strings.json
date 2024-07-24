@@ -1,18 +1,33 @@
 {
   "config": {
+    "error": {
+      "connect": "Connection to service failed",
+      "invalid_auth": "Service authentication failed, verify token",
+      "permission": "Permission denied for output path",
+      "not_allowed": "Output path not in 'allowlist_external_dirs' in configuration.yaml"
+    },
     "step": {
       "user": {
+        "title": "Service Configuration",
         "data": {
-          "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]"
+          "client_api_key": "Client API key",
+          "path_out": "Output path for images"
+        }
+      },
+      "sensor": {
+        "title": "Sensor Configuration",
+        "data": {
+          "platform": "Platform",
+          "name": "Name",
+          "service_device": "Device Name at Service",
+          "camera_entity_id": "Camera Entity",
+          "flash_entity_id": "Flash Switch Entity",
+          "sensor_type": "Sensor Type",
+          "maximum": "Max Fill Line Distance from Top (as % of Height)",
+          "minimum": "Min Fill Line Distance from Bottom (as % of Height)",
+          "scan_interval": "Scan Interval (Hours)"
         }
       }
-    },
-    "error": {
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"

@@ -12,8 +12,8 @@ INDICAM_MEASUREMENT = "image_processing.indicam_measurement"
 # Indicam service base URL
 INDICAM_URL = os.environ.get("INDICAM_URL", "https://app.hausnet.io/indicam/api")
 # For oil camera, scan time in seconds - default cycle time = 24 hours, Minimum = 4 hours
-VERTICAL_FLOAT_DEFAULT_SCAN_SECONDS = 24*60*60
-VERTICAL_FLOAT_MIN_SCAN_SECONDS = int(os.environ.get('INDICAM_MIN_SCAN', 4*60*60))
+VERTICAL_FLOAT_DEFAULT_SCAN_HOURS = 24
+VERTICAL_FLOAT_MIN_SCAN_HOURS = float(os.environ.get('INDICAM_MIN_SCAN', 4))
 # How many times, and for how long to wait for a measurement to be made
 MEASUREMENT_PROCESS_DELAYS = [1, 5, 25, 60, 90]
 # Number of times to retry image capture
@@ -37,4 +37,5 @@ CONF_CAMERA_ENTITY_ID = "camera_entity_id"
 CONF_FLASH_ENTITY_ID = "flash_entity_id"
 CONF_PATH_OUT = "path_out"
 CONF_SERVICE_DEVICE = "service_device"
+CONF_SENSORS = "sensors"
 

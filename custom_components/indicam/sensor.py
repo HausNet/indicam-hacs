@@ -2,43 +2,35 @@
 
 from __future__ import annotations
 
-import datetime
 from collections.abc import Mapping
 import logging
 from enum import StrEnum
 from typing import Any
 
-import voluptuous as vol
 import indicam_client
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.typing import UndefinedType
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA
-from homeassistant.components.switch import DOMAIN as DOMAIN_SWITCH
 from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
 from homeassistant.const import (
     CONF_MAXIMUM,
     CONF_MINIMUM,
     CONF_NAME,
-    CONF_SCAN_INTERVAL,
     CONF_SENSOR_TYPE,
     PERCENTAGE,
 )
 from homeassistant.core import HomeAssistant
-import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
-from . import get_component_state
 from .indicator_processors import VerticalFloatProcessor, VerticalFloatDecorator, ImageGrabber
+from . import IndiCamComponentState
 
 from .const import (
     ATTR_GAUGE_MEASUREMENT,
     CONF_CAMERA_ENTITY_ID,
     CONF_FLASH_ENTITY_ID,
     CONF_SERVICE_DEVICE,
-    VERTICAL_FLOAT_DEFAULT_SCAN_SECONDS,
-    VERTICAL_FLOAT_MIN_SCAN_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,64 +41,23 @@ class SensorType(StrEnum):
     VERTICAL_FLOAT = "vertical_float"
 
 
-# Additional configuration for vertical float sensors only.
-VERTICAL_FLOAT_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_SENSOR_TYPE): vol.Equal(SensorType.VERTICAL_FLOAT.value),
-        # Camera configuration - mark the measurement range relative to the body of the sensor
-        vol.Optional(CONF_MINIMUM, default=0): cv.positive_float,
-        vol.Optional(CONF_MAXIMUM, default=0): cv.positive_float,
-        # Overwrite the base config scan interval to add a minimum and default
-        vol.Optional(CONF_SCAN_INTERVAL, default=datetime.timedelta(seconds=VERTICAL_FLOAT_DEFAULT_SCAN_SECONDS)):
-            vol.All(
-                cv.time_period,
-                cv.positive_timedelta,
-                vol.Range(min=datetime.timedelta(seconds=VERTICAL_FLOAT_MIN_SCAN_SECONDS))
-            ),
-    }
-)
-
-##
-# The platform configuration schema. There is only one sensor type - the vertical float, so this is the only
-# configuration possible. When other types of sensors are added, the different schemas should be wrapped in
-# vol.Any(), with each schema having a vol.In([SENSOR_TYPE]) to key the sub-schema.
-#
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        # The nome of the sensor identifying it in Home Assistant
-        vol.Required(CONF_NAME): cv.string,
-        # The device name representing this sensor at the service. Used to name saved images too.
-        vol.Required(CONF_SERVICE_DEVICE): cv.string,
-        # The entity ID of the camera to get input images from
-        vol.Required(CONF_CAMERA_ENTITY_ID): cv.entity_domain(DOMAIN_CAMERA),
-        # The entity ID of a switch controlling a flash (e.g. on-board LED)
-        vol.Optional(CONF_FLASH_ENTITY_ID): cv.entity_domain(DOMAIN_SWITCH),
-    }
-).extend(VERTICAL_FLOAT_SCHEMA.schema)
-
-
-async def async_setup_platform(
-    hass: HomeAssistant,
-    config: ConfigType,
-    async_add_entities: AddEntitiesCallback,
-    discovery_info: DiscoveryInfoType | None = None,
-) -> None:
-    """ Set up an IndiCam sensor."""
-    if CONF_SENSOR_TYPE not in config or config[CONF_SENSOR_TYPE] != SensorType.VERTICAL_FLOAT:
-        _LOGGER.error("Sensor type is not vertical float")
-        return
-    name = config[CONF_NAME]
-    service_device = config[CONF_SERVICE_DEVICE]
-    camera_entity_id = config[CONF_CAMERA_ENTITY_ID]
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    """Set up a sensor entity from a config entry."""
+    if CONF_SENSOR_TYPE not in entry.data or entry.data[CONF_SENSOR_TYPE] != SensorType.VERTICAL_FLOAT.value:
+        raise ValueError("Sensor type is not vertical float")
+    name = entry.data[CONF_NAME]
+    service_device = entry.data[CONF_SERVICE_DEVICE]
+    camera_entity_id = entry.data[CONF_CAMERA_ENTITY_ID]
     cam_config = indicam_client.CamConfig(
-        min_perc=config[CONF_MINIMUM], max_perc=config[CONF_MAXIMUM]
+        min_perc=entry.data[CONF_MINIMUM], max_perc=entry.data[CONF_MAXIMUM]
     )
-    flash_entity_id = config.get(CONF_FLASH_ENTITY_ID, None)
-    processor = VerticalFloatProcessor(hass, get_component_state().api_client, service_device, cam_config)
-    decorator = VerticalFloatDecorator(hass, get_component_state().out_path, service_device)
+    flash_entity_id = entry.data[CONF_FLASH_ENTITY_ID]
+    component_state: IndiCamComponentState = entry.runtime_data
+    processor = VerticalFloatProcessor(hass, entry.runtime_data.api_client, service_device, cam_config)
+    decorator = VerticalFloatDecorator(hass, component_state.out_path, service_device)
     grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
     entity = IndiCamSensorEntity(name, grabber, processor, decorator)
-    async_add_entities([entity,])
+    async_add_entities([entity, ])
 
 
 class IndiCamSensorEntity(SensorEntity):
