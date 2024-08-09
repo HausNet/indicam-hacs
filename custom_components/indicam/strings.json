@@ -1,18 +1,13 @@
 {
   "config": {
-    "error": {
-      "connect": "Connection to service failed",
-      "invalid_auth": "Service authentication failed, verify token",
-      "permission": "Permission denied for output path",
-      "not_allowed": "Output path not in 'allowlist_external_dirs' in configuration.yaml"
-    },
     "step": {
       "user": {
         "title": "Service Configuration",
         "data": {
           "client_api_key": "Client API key",
           "path_out": "Output path for images"
-        }
+        },
+        "description": "Connect to the service and define local storage"
       },
       "sensor": {
         "title": "Sensor Configuration",
@@ -22,15 +17,37 @@
           "service_device": "Device Name at Service",
           "camera_entity_id": "Camera Entity",
           "flash_entity_id": "Flash Switch Entity",
-          "sensor_type": "Sensor Type",
-          "maximum": "Max Fill Line Distance from Top (as % of Height)",
-          "minimum": "Min Fill Line Distance from Bottom (as % of Height)",
-          "scan_interval": "Scan Interval (Hours)"
-        }
+          "sensor_type": "Sensor Type"
+        },
+        "description": "Set up a sensor"
       }
+    },
+    "error": {
+      "connect": "Could not connect to service",
+      "api_auth": "Service authentication failure - please verify API key",
+      "permission": "Permission denied for output path",
+      "not_allowed": "Output path not in 'allowlist_external_dirs' in configuration.yaml"
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Modify options",
+        "data": {
+          "maximum": "Max Fill Line Distance from Top (as % of Height)",
+          "minimum": "Min Fill Line Distance from Bottom (as % of Height)",
+          "scan_interval": "Scan Interval (Hours)"
+        },
+        "description": "Modify the min/max values, or the scan interval"
+      }
+    },
+    "error": {
+      "invalid_max": "The maximum provided is not valid. Must be an integer % value between 0 and 25",
+      "invalid_min": "The minimum provided is not valid. Must be an integer % value between 0 and 25",
+      "invalid_scan": "The scan time provided is not valid. Must be a number of hours between 4 and 24."
     }
   }
 }

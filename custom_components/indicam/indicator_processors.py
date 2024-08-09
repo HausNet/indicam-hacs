@@ -137,7 +137,7 @@ class VerticalFloatProcessor(IndicatorProcessor):
         """Set up the service URL and call headers."""
         self.cam_config = camconfig
         self._hass = hass
-        self._device_name: str = device_name
+        self.device_name: str = device_name
         self._api_client: indicam_client.IndiCamServiceClient = client
         self._updated_cam_config: bool = False
         self._indicam_id: int | None = None
@@ -155,7 +155,7 @@ class VerticalFloatProcessor(IndicatorProcessor):
         start = time.monotonic()
         if not self._updated_cam_config:
             await self._update_cam_config()
-        image_id = await self._api_client.upload_image(self._device_name, image)
+        image_id = await self._api_client.upload_image(self.device_name, image)
         if not image_id:
             _LOGGER.error("Image upload failed, no image ID returned")
             return None, time.monotonic() - start
@@ -211,18 +211,17 @@ class VerticalFloatProcessor(IndicatorProcessor):
     async def _get_indicam_id(self) -> int | None:
         """If the IndiCam ID has not yet been retrieved, get it."""
         if not self._indicam_id:
-            self._indicam_id = await self._api_client.get_indicam_id(self._device_name)
+            self._indicam_id = await self._api_client.get_indicam_id(self.device_name)
         return self._indicam_id
 
 
 class VerticalFloatDecorator(IndicatorDecorator):
     """Saves a snapshot of the original image, and decorates an image based on the measurement."""
 
-    def __init__(self, hass: HomeAssistant, file_path: str, file_prefix: str):
+    def __init__(self, file_path: str, file_prefix: str):
         """Store configuration values."""
         self._file_path = file_path
         self._file_prefix = file_prefix
-        #template.attach(hass, self._file_path)
 
     async def decorate_and_save(
             self,

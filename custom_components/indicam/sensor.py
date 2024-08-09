@@ -10,27 +10,26 @@ from typing import Any
 import indicam_client
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.typing import UndefinedType
 from homeassistant.components.sensor import SensorDeviceClass, SensorStateClass
-from homeassistant.components.sensor import PLATFORM_SCHEMA, SensorEntity
+from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import (
     CONF_MAXIMUM,
     CONF_MINIMUM,
     CONF_NAME,
     CONF_SENSOR_TYPE,
     PERCENTAGE,
+    CONF_SENSORS,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .indicator_processors import VerticalFloatProcessor, VerticalFloatDecorator, ImageGrabber
 from . import IndiCamComponentState
-
 from .const import (
     ATTR_GAUGE_MEASUREMENT,
     CONF_CAMERA_ENTITY_ID,
     CONF_FLASH_ENTITY_ID,
-    CONF_SERVICE_DEVICE,
+    CONF_SERVICE_DEVICE, DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,22 +41,28 @@ class SensorType(StrEnum):
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    """Set up a sensor entity from a config entry."""
-    if CONF_SENSOR_TYPE not in entry.data or entry.data[CONF_SENSOR_TYPE] != SensorType.VERTICAL_FLOAT.value:
-        raise ValueError("Sensor type is not vertical float")
-    name = entry.data[CONF_NAME]
-    service_device = entry.data[CONF_SERVICE_DEVICE]
-    camera_entity_id = entry.data[CONF_CAMERA_ENTITY_ID]
-    cam_config = indicam_client.CamConfig(
-        min_perc=entry.data[CONF_MINIMUM], max_perc=entry.data[CONF_MAXIMUM]
-    )
-    flash_entity_id = entry.data[CONF_FLASH_ENTITY_ID]
-    component_state: IndiCamComponentState = entry.runtime_data
-    processor = VerticalFloatProcessor(hass, entry.runtime_data.api_client, service_device, cam_config)
-    decorator = VerticalFloatDecorator(hass, component_state.out_path, service_device)
-    grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
-    entity = IndiCamSensorEntity(name, grabber, processor, decorator)
-    async_add_entities([entity, ])
+    """ Set up a sensor entity from a config entry.
+
+        Note: Allows for many sensors, but only one can be configured for now.
+    """
+    entities: list[IndiCamSensorEntity] = []
+    for sensor_conf in entry.data[CONF_SENSORS]:
+        if CONF_SENSOR_TYPE not in sensor_conf or sensor_conf[CONF_SENSOR_TYPE] != SensorType.VERTICAL_FLOAT.value:
+            raise ValueError("Sensor type is not vertical float")
+        name = sensor_conf[CONF_NAME]
+        service_device = sensor_conf[CONF_SERVICE_DEVICE]
+        camera_entity_id = sensor_conf[CONF_CAMERA_ENTITY_ID]
+        cam_config = indicam_client.CamConfig(
+            min_perc=entry.options.get(CONF_MINIMUM), max_perc=entry.options.get(CONF_MAXIMUM)
+        )
+        flash_entity_id = sensor_conf[CONF_FLASH_ENTITY_ID]
+        component_state: IndiCamComponentState = entry.runtime_data
+        processor = VerticalFloatProcessor(hass, entry.runtime_data.api_client, service_device, cam_config)
+        decorator = VerticalFloatDecorator(component_state.out_path, service_device)
+        grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
+        entity = IndiCamSensorEntity(name, grabber, processor, decorator)
+        entities.append(entity)
+    async_add_entities(entities)
 
 
 class IndiCamSensorEntity(SensorEntity):
@@ -78,9 +83,13 @@ class IndiCamSensorEntity(SensorEntity):
         self._last_result: indicam_client.GaugeMeasurement | None = None
 
     @property
-    def name(self) -> str | UndefinedType | None:
+    def name(self) -> str:
         """Return the device name"""
         return self._name
+
+    @property
+    def unique_id(self) -> str | None:
+        return f"{DOMAIN}{self._name}-{self._processor.device_name}"
 
     @property
     def native_unit_of_measurement(self) -> float:

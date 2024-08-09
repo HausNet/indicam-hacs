@@ -1,13 +1,15 @@
 """Config flow for Indicam."""
 import os
-from typing import Optional
+from typing import Optional, Any
 
 import aiofiles.os as aio_os
 import aiohttp
 import indicam_client
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.helpers.device_registry import async_entries_for_config_entry
+from homeassistant.core import callback
+from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlow
 from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA
 from homeassistant.components.switch import DOMAIN as DOMAIN_SWITCH
 from homeassistant.const import (
@@ -79,23 +81,11 @@ MIN_FACTOR_SELECTOR = NumberSelector(NumberSelectorConfig(
     min=0, max=25, mode=NumberSelectorMode.BOX, unit_of_measurement="%",  step=1
 ))
 MAX_FACTOR_SELECTOR = NumberSelector(NumberSelectorConfig(
-    min=0, max=25, mode=NumberSelectorMode.BOX, unit_of_measurement="%",  step=1
+    min=0, max=25, mode=NumberSelectorMode.BOX, unit_of_measurement="%",  step='any'
 ))
 SCAN_INTERVAL_SELECTOR = NumberSelector(NumberSelectorConfig(
     min=VERTICAL_FLOAT_MIN_SCAN_HOURS, mode=NumberSelectorMode.BOX, unit_of_measurement="hours", step=1
 ))
-
-VERTICAL_FLOAT_SCHEMA = INDICAM_SENSOR_SCHEMA.extend(
-    {
-        # Camera type -- filled in on the backend now because there's just one type
-        # vol.Required(CONF_SENSOR_TYPE): SENSOR_TYPE_SELECTOR
-        # Camera configuration - mark the measurement range relative to the body of the sensor
-        vol.Optional(CONF_MINIMUM, default=0): MIN_FACTOR_SELECTOR,
-        vol.Optional(CONF_MAXIMUM, default=0): MAX_FACTOR_SELECTOR,
-        # Overwrite the base config scan interval to add a minimum and default
-        vol.Optional(CONF_SCAN_INTERVAL, default=VERTICAL_FLOAT_DEFAULT_SCAN_HOURS): SCAN_INTERVAL_SELECTOR
-    }
-)
 
 
 class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -110,7 +100,7 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
         self.data: dict[str: str] = {}
 
     async def async_step_user(self, user_input=None):
-        """Handle a flow initiated by the user."""
+        """ Handle a flow initiated by the user. """
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -118,12 +108,14 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
             except ConfigEntryError:
                 errors["base"] = "connect"
             except ConfigEntryAuthFailed:
-                errors["base"] = "invalid auth"
+                errors["base"] = "api_auth"
             except PermissionError:
                 errors["base"] = "permission"
             except ValueError as e:
                 errors["base"] = e.args[0]
             if not errors:
+                await self.async_set_unique_id(DOMAIN)
+                self._abort_if_unique_id_configured()
                 self.data = user_input
                 self.data[CONF_SENSORS] = []
                 return await self.async_step_sensor()
@@ -152,28 +144,28 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
                 raise PermissionError
 
     async def async_step_sensor(self, user_input=None):
-        """Allow the user to define a sensor"""
+        """ Allow the user to define a sensor.
+
+            The config structure allows for future expansion to more sensors, but, only one is allowed right now.
+        """
         if user_input is not None:
             valid = await self.sensor_step_input_is_valid(user_input)
             if valid:
-                self.data[CONF_SENSORS].append(
-                    {
-                        CONF_PLATFORM: DOMAIN,
-                        CONF_NAME: user_input[CONF_NAME],
-                        CONF_SERVICE_DEVICE: user_input[CONF_SERVICE_DEVICE],
-                        CONF_CAMERA_ENTITY_ID: user_input[CONF_CAMERA_ENTITY_ID],
-                        CONF_FLASH_ENTITY_ID: user_input[CONF_FLASH_ENTITY_ID],
-                        CONF_SENSOR_TYPE: SensorType.VERTICAL_FLOAT.value,
-                        CONF_MINIMUM: user_input[CONF_MINIMUM] / 100,
-                        CONF_MAXIMUM: user_input[CONF_MAXIMUM] / 100,
-                        CONF_SCAN_INTERVAL: user_input[CONF_SCAN_INTERVAL],
-                    }
-                )
-                # TODO: For adding multiple sensors
-                # if user_input.get("add_another", False):
-                #    return await self.async_step_sensor()
-                return self.async_create_entry(title="Indicam Sensor", data=self.data)
-        return self.async_show_form(step_id="sensor", data_schema=VERTICAL_FLOAT_SCHEMA)
+                data = self.data[CONF_SENSORS]
+                data[CONF_PLATFORM] = DOMAIN
+                data[CONF_SENSOR_TYPE] = SensorType.VERTICAL_FLOAT.value
+                data[CONF_NAME] = user_input[CONF_NAME]
+                data[CONF_SERVICE_DEVICE] = user_input[CONF_SERVICE_DEVICE]
+                data[CONF_CAMERA_ENTITY_ID] = user_input[CONF_CAMERA_ENTITY_ID]
+                data[CONF_FLASH_ENTITY_ID] = user_input[CONF_FLASH_ENTITY_ID]
+                # These are defaults for options
+                options = {
+                    CONF_MINIMUM: 0,
+                    CONF_MAXIMUM: 0,
+                    CONF_SCAN_INTERVAL: VERTICAL_FLOAT_DEFAULT_SCAN_HOURS
+                }
+                return self.async_create_entry(title="Indicam Sensor", data=data, options=options)
+        return self.async_show_form(step_id="sensor", data_schema=INDICAM_SENSOR_SCHEMA)
 
     @staticmethod
     async def sensor_step_input_is_valid(user_input) -> bool:
@@ -182,3 +174,49 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
            TODO: Query sensor for existence
         """
         return True
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry):
+        """ Return the options flow for this handler. """
+        return OptionsFlowHandler(config_entry)
+
+
+class OptionsFlowHandler(OptionsFlow):
+    """ Options for the IndiCam sensor. """
+
+    def __init__(self, config_entry: ConfigEntry):
+        """ Store the config entry. """
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input: [str, Any] = None):
+        """ Options form and validation.
+
+            NOTE: We only deal with one sensor for now.
+        """
+        errors: [str, Any] = None
+        if user_input is not None:
+            # TODO: Validate input
+            updated_options = {
+                CONF_MINIMUM: user_input[CONF_MINIMUM] / 100,
+                CONF_MAXIMUM: user_input[CONF_MAXIMUM] / 100,
+                CONF_SCAN_INTERVAL: user_input[CONF_SCAN_INTERVAL]
+            }
+            return self.async_create_entry(title="", options=updated_options)
+        return self.async_show_form(step_id="init", data_schema=self.options_schema(), errors=errors)
+
+    def options_schema(self) -> vol.Schema:
+        """ Create the options schema with defaults from the current entry. """
+        return vol.Schema(
+            {
+                # Camera configuration - mark the measurement range relative to the body of the sensor
+                vol.Optional(CONF_MINIMUM, default=self.config_entry.options.get(CONF_MINIMUM)): MIN_FACTOR_SELECTOR,
+                vol.Optional(CONF_MAXIMUM, default=self.config_entry.options.get(CONF_MAXIMUM)): MAX_FACTOR_SELECTOR,
+                # Overwrite the base config scan interval to add a minimum and default
+                vol.Optional(CONF_SCAN_INTERVAL, default=self.config_entry.options.get(CONF_SCAN_INTERVAL)):
+                    SCAN_INTERVAL_SELECTOR
+            }
+        )
+
+
+
