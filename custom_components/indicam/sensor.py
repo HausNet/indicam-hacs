@@ -52,8 +52,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         name = sensor_conf[CONF_NAME]
         service_device = sensor_conf[CONF_SERVICE_DEVICE]
         camera_entity_id = sensor_conf[CONF_CAMERA_ENTITY_ID]
+        sensor_options = entry.options[sensor_conf[CONF_SERVICE_DEVICE]]
         cam_config = indicam_client.CamConfig(
-            min_perc=entry.options.get(CONF_MINIMUM), max_perc=entry.options.get(CONF_MAXIMUM)
+            min_perc=sensor_options.get(CONF_MINIMUM), max_perc=sensor_options.get(CONF_MAXIMUM)
         )
         flash_entity_id = sensor_conf[CONF_FLASH_ENTITY_ID]
         component_state: IndiCamComponentState = entry.runtime_data

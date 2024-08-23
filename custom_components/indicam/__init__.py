@@ -6,6 +6,7 @@ from typing import Optional
 
 import indicam_client
 
+from homeassistant.const import Platform
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError
 from homeassistant.core import HomeAssistant
@@ -40,8 +41,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         out_path=entry.data[CONF_PATH_OUT]
     )
     await hass.config_entries.async_forward_entry_setup(entry, 'sensor')
-    unsub_options_update_listener = entry.add_update_listener(options_update_listener)
-    entry.unsub_options_update_listener = unsub_options_update_listener
+    entry.add_update_listener(options_update_listener)
+    #entry.unsub_options_update_listener = unsub_options_update_listener
     return True
 
 
@@ -65,3 +66,8 @@ async def test_client_connect(client: indicam_client.IndiCamServiceClient):
 async def options_update_listener(hass: HomeAssistant, config_entry: ConfigEntry):
     """Handle options update."""
     await hass.config_entries.async_reload(config_entry.entry_id)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload the config entry, for use after options are updated."""
+    return await hass.config_entries.async_unload_platforms(entry, [Platform.SENSOR,])
