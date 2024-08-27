@@ -42,7 +42,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await hass.config_entries.async_forward_entry_setup(entry, 'sensor')
     entry.add_update_listener(options_update_listener)
-    #entry.unsub_options_update_listener = unsub_options_update_listener
     return True
 
 
