@@ -9,7 +9,7 @@
   "homekit": {},
   "integration_type": "device",
   "iot_class": "cloud_polling",
-  "requirements": ["Pillow==10.3.0", "indicam_client==1.0.5", "aiofiles==23.2"],
+  "requirements": ["Pillow>=10", "indicam_client==1.0.5", "aiofiles==23.2"],
   "ssdp": [],
   "zeroconf": []
 }
