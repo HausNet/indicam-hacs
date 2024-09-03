@@ -9,6 +9,12 @@
         },
         "description": "Connect to the service and define local storage"
       },
+      "reauth_confirm": {
+        "title": "Re-authenticate Service",
+        "data": {
+          "client_api_key": "Client API key"
+        }
+      },
       "sensor": {
         "title": "Sensor Configuration",
         "data": {
@@ -26,7 +32,8 @@
       "connect": "Could not connect to service",
       "api_auth": "Service authentication failure - please verify API key",
       "permission": "Permission denied for output path",
-      "not_allowed": "Output path not in 'allowlist_external_dirs' in configuration.yaml"
+      "not_allowed": "Output path not in 'allowlist_external_dirs' in configuration.yaml",
+      "unknown_service_device": "Device not found at service"
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"

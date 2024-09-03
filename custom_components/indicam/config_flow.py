@@ -8,9 +8,8 @@ import aiohttp
 import indicam_client
 import voluptuous as vol
 
-from homeassistant.helpers.device_registry import async_entries_for_config_entry
 from homeassistant.core import callback
-from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlow, OptionsFlowWithConfigEntry
+from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlowWithConfigEntry
 from homeassistant.components.camera import DOMAIN as DOMAIN_CAMERA
 from homeassistant.components.switch import DOMAIN as DOMAIN_SWITCH
 from homeassistant.const import (
@@ -40,7 +39,7 @@ from .const import (
     VERTICAL_FLOAT_MIN_SCAN_HOURS,
     CONF_SERVICE_DEVICE,
     CONF_CAMERA_ENTITY_ID,
-    CONF_FLASH_ENTITY_ID, INDICAM_URL
+    CONF_FLASH_ENTITY_ID, INDICAM_URL, VERTICAL_FLOAT_MAX_SCAN_HOURS
 )
 from .sensor import SensorType
 from . import test_client_connect
@@ -48,27 +47,25 @@ from . import test_client_connect
 # TODO: Remove default key
 INTEGRATION_CONFIG_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_CLIENT_API_KEY, default="5872c1a0263aba7cf1e681903ab861adffd4f0ec"): str,
+        vol.Required(CONF_CLIENT_API_KEY): str,
         vol.Optional(CONF_PATH_OUT, default="/tmp/indicam"): str,
     }
 )
 
 # The base sensor platform configuration schema. There is only one platform now - a sensor.
 # TODO: Remove default values & entity lists
-CAMERA_ENTITY_SELECTOR = EntitySelector(EntitySelectorConfig(domain=DOMAIN_CAMERA, include_entities=["camera.indicator_camera",]))
-FLASH_ENTITY_SELECTOR = EntitySelector(EntitySelectorConfig(domain=DOMAIN_SWITCH, include_entities=["switch.oil_tank_camera_flash",]))
+CAMERA_ENTITY_SELECTOR = EntitySelector(EntitySelectorConfig(domain=DOMAIN_CAMERA))
+FLASH_ENTITY_SELECTOR = EntitySelector(EntitySelectorConfig(domain=DOMAIN_SWITCH))
 INDICAM_SENSOR_SCHEMA = vol.Schema(
     {
         # The nome of the sensor identifying it in Home Assistant
-        vol.Required(CONF_NAME, default="Oil Level"): str,
+        vol.Required(CONF_NAME): str,
         # The device name representing this sensor at the service. Used to name saved images too.
-        vol.Required(CONF_SERVICE_DEVICE, default="test_hass2"): str,
+        vol.Required(CONF_SERVICE_DEVICE): str,
         # The entity ID of the camera to get input images from
         vol.Required(CONF_CAMERA_ENTITY_ID): CAMERA_ENTITY_SELECTOR,
         # The entity ID of a switch controlling a flash (e.g. on-board LED)
         vol.Optional(CONF_FLASH_ENTITY_ID): FLASH_ENTITY_SELECTOR,
-        # TODO: Add multiple sensors later
-        # vol.Optional("add_another"): cv.boolean,
     }
 )
 
@@ -84,10 +81,14 @@ MIN_FACTOR_SELECTOR = NumberSelector(NumberSelectorConfig(
     min=0, max=25, mode=NumberSelectorMode.BOX, unit_of_measurement="%",  step=1
 ))
 MAX_FACTOR_SELECTOR = NumberSelector(NumberSelectorConfig(
-    min=0, max=25, mode=NumberSelectorMode.BOX, unit_of_measurement="%",  step='any'
+    min=0, max=25, mode=NumberSelectorMode.BOX, unit_of_measurement="%",  step=1
 ))
 SCAN_INTERVAL_SELECTOR = NumberSelector(NumberSelectorConfig(
-    min=VERTICAL_FLOAT_MIN_SCAN_HOURS, mode=NumberSelectorMode.BOX, unit_of_measurement="hours", step=1
+    min=VERTICAL_FLOAT_MIN_SCAN_HOURS,
+    max=VERTICAL_FLOAT_MAX_SCAN_HOURS,
+    mode=NumberSelectorMode.BOX,
+    unit_of_measurement='hours',
+    step='any'
 ))
 
 
@@ -104,7 +105,6 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """ Handle a flow initiated by the user. """
-        # TODO: Remove default testing values
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
@@ -117,7 +117,7 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "permission"
             except ValueError as e:
                 errors["base"] = e.args[0]
-            if not errors:
+            else:
                 await self.async_set_unique_id(DOMAIN)
                 self._abort_if_unique_id_configured()
                 self.data = user_input
@@ -152,9 +152,13 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
 
             The config structure allows for future expansion to more sensors, but, only one is allowed right now.
         """
+        errors: dict[str, str] = {}
         if user_input is not None:
-            valid = await self.sensor_step_input_is_valid(user_input)
-            if valid:
+            try:
+                await self.sensor_step_input_is_valid(user_input)
+            except ValueError:
+                errors["base"] = "unknown_service_device"
+            else:
                 self.data[CONF_SENSORS].append({
                     CONF_PLATFORM: DOMAIN,
                     CONF_SENSOR_TYPE: SensorType.VERTICAL_FLOAT.value,
@@ -172,14 +176,17 @@ class IndiCamConfigFlow(ConfigFlow, domain=DOMAIN):
                     }
                 }
                 return self.async_create_entry(title="Indicam Sensor", data=self.data, options=options)
-        return self.async_show_form(step_id="sensor", data_schema=INDICAM_SENSOR_SCHEMA)
+        return self.async_show_form(step_id="sensor", data_schema=INDICAM_SENSOR_SCHEMA, errors=errors)
 
-    @staticmethod
-    async def sensor_step_input_is_valid(user_input) -> bool:
-        """ Validate the sensor user input
+    async def sensor_step_input_is_valid(self, user_input) -> bool:
+        """ Validate the sensor user input.
 
-           TODO: Query sensor for existence
+            Queries for the existence of the device at the service.
         """
+        async with aiohttp.ClientSession() as session:
+            client = indicam_client.IndiCamServiceClient(session, INDICAM_URL, self.data[CONF_CLIENT_API_KEY])
+            if await client.get_indicam_id(user_input[CONF_SERVICE_DEVICE]) is None:
+                raise ValueError("Unknown service device")
         return True
 
     @staticmethod
@@ -239,4 +246,3 @@ class IndiCamOptionsFlow(OptionsFlowWithConfigEntry):
             CONF_MAXIMUM: user_data[CONF_MAXIMUM] / 100,
             CONF_SCAN_INTERVAL: user_data[CONF_SCAN_INTERVAL]
         }
-
