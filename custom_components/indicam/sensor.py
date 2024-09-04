@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Mapping
 import logging
 from enum import StrEnum
@@ -19,6 +20,7 @@ from homeassistant.const import (
     CONF_SENSOR_TYPE,
     PERCENTAGE,
     CONF_SENSORS,
+    CONF_SCAN_INTERVAL,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -61,7 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         processor = VerticalFloatProcessor(hass, entry.runtime_data.api_client, service_device, cam_config)
         decorator = VerticalFloatDecorator(component_state.out_path, service_device)
         grabber = ImageGrabber(hass, camera_entity_id, flash_entity_id)
-        entity = IndiCamSensorEntity(name, grabber, processor, decorator)
+        entity = IndiCamSensorEntity(name, sensor_options[CONF_SCAN_INTERVAL], grabber, processor, decorator)
         entities.append(entity)
     async_add_entities(entities)
 
@@ -72,16 +74,19 @@ class IndiCamSensorEntity(SensorEntity):
     def __init__(
             self,
             name: str,
+            scan_interval_hours: float,
             grabber: ImageGrabber,
             processor: VerticalFloatProcessor,
             decorator: VerticalFloatDecorator
     ) -> None:
         """Initialize a processor entity for a camera."""
         self._name = name
+        self._scan_interval_hours = scan_interval_hours
         self._grabber = grabber
         self._processor = processor
         self._decorator = decorator
         self._last_result: indicam_client.GaugeMeasurement | None = None
+        self._last_time: dt.datetime | None = None
 
     @property
     def name(self) -> str:
@@ -123,6 +128,14 @@ class IndiCamSensorEntity(SensorEntity):
         """ Takes and saves a snapshot image, and processes it to obtain a measurement.
             If a result was obtained, creates a decorated image showing the measurements, and saves it.
         """
+        now = dt.datetime.now()
+        if self._last_time is None:
+            next_time = now
+        else:
+            next_time = self._last_time + dt. timedelta(hours=self._scan_interval_hours)
+        if now < next_time:
+            return
+        self._last_time = now
         _LOGGER.info("Grabbing vertical float snapshot image")
         image: bytes = await self._grabber.grab_image()
         if not image:
