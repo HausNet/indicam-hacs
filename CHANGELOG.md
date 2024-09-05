@@ -1,6 +1,12 @@
 # Change Log
 A log of changes made, following the [Common Changelog Format](https://common-changelog.org).
 
+## 1.0.1 - 2024-09-05
+Defect fix to make scan interval work correctly
+
+## 1.0 - 2024-09-04
+Config flow instead of YAML
+
 ## 1.0b18 - 2024-08-30
 Defect fix.
 
