@@ -207,42 +207,43 @@ class IndiCamOptionsFlow(OptionsFlowWithConfigEntry):
         errors: [str, Any] = None
         if user_input is not None:
             data = {key: value for key, value in self.config_entry.data.items()}
-            data[self.config_entry.data[CONF_SENSORS][0][CONF_SERVICE_DEVICE]] = user_input
+            service_name = self.config_entry.data[CONF_SENSORS][0][CONF_SERVICE_DEVICE]
+            data[service_name] = self.user_data_to_options(user_input)
             return self.async_create_entry(title="", data=data)
         return self.async_show_form(step_id="init", data_schema=self.options_schema(), errors=errors)
 
     def options_schema(self) -> vol.Schema:
         """ Create the options schema with defaults from the current entry. """
-        s_dev: str = self.config_entry.data[CONF_SENSORS][0][CONF_SERVICE_DEVICE]
-        def_min = self.config_entry.options[s_dev].get(CONF_MINIMUM)
-        def_max = self.config_entry.options[s_dev].get(CONF_MAXIMUM)
-        def_scan = self.config_entry.options[s_dev].get(CONF_SCAN_INTERVAL)
+        service_device: str = self.config_entry.data[CONF_SENSORS][0][CONF_SERVICE_DEVICE]
+        user_data = self.options_to_user_data(self.config_entry.options[service_device])
         return vol.Schema(
             {
                 # Camera configuration - mark the measurement range relative to the body of the sensor
-                vol.Optional(CONF_MINIMUM, default=def_min): MIN_FACTOR_SELECTOR,
-                vol.Optional(CONF_MAXIMUM, default=def_max): MAX_FACTOR_SELECTOR,
+                vol.Optional(CONF_MINIMUM, default=user_data[CONF_MINIMUM]): MIN_FACTOR_SELECTOR,
+                vol.Optional(CONF_MAXIMUM, default=user_data[CONF_MAXIMUM]): MAX_FACTOR_SELECTOR,
                 # Overwrite the base config scan interval to add a minimum and default
-                vol.Optional(CONF_SCAN_INTERVAL, default=def_scan): SCAN_INTERVAL_SELECTOR
+                vol.Optional(CONF_SCAN_INTERVAL, default=user_data[CONF_SCAN_INTERVAL]): SCAN_INTERVAL_SELECTOR
             }
         )
 
     @staticmethod
     def options_to_user_data(options: MappingProxyType[str, Any]) -> dict[str, Any]:
         """ Return the user data as presented on the screen (% offsets), translated from the stored values
-            (factor offsets).
+            (factor offsets). Limit percentage to 2 decimals (or factor to 4) to avoid rounding issues.
         """
         return {
-            CONF_MINIMUM: options.get(CONF_MINIMUM) * 100,
-            CONF_MAXIMUM: options.get(CONF_MAXIMUM) * 100,
+            CONF_MINIMUM: round(options.get(CONF_MINIMUM) * 100, 2),
+            CONF_MAXIMUM: round(options.get(CONF_MAXIMUM) * 100, 2),
             CONF_SCAN_INTERVAL: options.get(CONF_SCAN_INTERVAL)
         }
 
     @staticmethod
     def user_data_to_options(user_data: dict[str, Any]) -> dict[str, Any]:
-        """ Convert data as presented to the user (% min/max), to factor values. """
+        """ Convert data as presented to the user (% min/max), to factor values. Allow 4 decimals of accuracy
+            to avoid rounding issues.
+        """
         return {
-            CONF_MINIMUM: user_data[CONF_MINIMUM] / 100,
-            CONF_MAXIMUM: user_data[CONF_MAXIMUM] / 100,
+            CONF_MINIMUM: round(user_data[CONF_MINIMUM] / 100, 4),
+            CONF_MAXIMUM: round(user_data[CONF_MAXIMUM] / 100, 4),
             CONF_SCAN_INTERVAL: user_data[CONF_SCAN_INTERVAL]
         }
