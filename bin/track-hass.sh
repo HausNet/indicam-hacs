@@ -8,9 +8,9 @@
 
 # Empty out workspace
 cd ~/workspace/hausnet
-rm -rf ./indicam-track-hass
-mkdir ./indicam-track-hass
-cd ./indicam-track-hass
+rm -rf indicam-track-hass
+mkdir indicam-track-hass
+cd indicam-track-hass
 
 # Get indicam HACS source
 git clone git@github.com:HausNet/indicam-hacs.git
@@ -27,9 +27,11 @@ git merge upstream/dev
 git push
 
 # Set up, then run tests
-./script/setup
-. ./venv/bin/activate
-mkdir ./config/custom_components
+script/setup
+. venv/bin/activate
+mkdir config/custom_components
 ln -s ../../../indicam-hacs/custom_components/indicam ./config/custom_components/indicam
-pip3 install ../indicam-hacs/requirements.txt
+script/gen_requirements_all.py
+pip3 install -r requirements_test_all.txt
+pip3 install -r ../indicam-hacs/requirements.txt
 

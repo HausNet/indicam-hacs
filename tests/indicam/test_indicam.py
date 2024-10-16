@@ -14,7 +14,7 @@ import pytest
 
 from homeassistant.components.demo import DOMAIN as DEMO_DOMAIN
 from homeassistant.components.image_processing import DOMAIN as IP_DOMAIN, SERVICE_SCAN
-from homeassistant.components.indicam.const import (
+from homeassistant.custom_components.indicam.const import (
     ATTR_GAUGE_MEASUREMENT,
     CONF_AUTH_KEY,
     CONF_CAMERA_ENTITY_ID,
