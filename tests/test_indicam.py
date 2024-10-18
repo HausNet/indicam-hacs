@@ -14,7 +14,7 @@ import pytest
 
 from homeassistant.components.demo import DOMAIN as DEMO_DOMAIN
 from homeassistant.components.image_processing import DOMAIN as IP_DOMAIN, SERVICE_SCAN
-from homeassistant.custom_components.indicam.const import (
+from custom_components.indicam.const import (
     ATTR_GAUGE_MEASUREMENT,
     CONF_AUTH_KEY,
     CONF_CAMERA_ENTITY_ID,
@@ -31,8 +31,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-
-from tests.common import async_capture_events
+from pytest_homeassistant_custom_component.common import async_capture_events
 
 CAM_CONFIG = CamConfig(min_perc=0.1, max_perc=0.1)
 CONFIG = {
