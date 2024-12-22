@@ -2,7 +2,7 @@
   "domain": "indicam",
   "name": "Indicator Camera",
   "version": "1.0b16",
-  "codeowners": ["@HausNet/indicam-client", "@liber-tas"],
+  "codeowners": ["@HausNet/indicam-hacs", "@liber-tas"],
   "config_flow": true,
   "single_config_entry": true,
   "documentation": "https://docs.hausnet.io/indicam",
