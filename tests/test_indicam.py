@@ -34,7 +34,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import async_capture_events
 
 CAM_CONFIG = CamConfig(min_perc=0.1, max_perc=0.1)
-CONFIG = {
+CONFIG = ConfigEntry{
     IP_DOMAIN: [
         {
             CONF_PLATFORM: INDICAM_DOMAIN,

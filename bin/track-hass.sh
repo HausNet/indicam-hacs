@@ -38,8 +38,6 @@ mkdir config/custom_components
 ln -s ../../../indicam-hacs/custom_components/indicam ./config/custom_components/indicam
 script/gen_requirements_all.py
 pip3 install -r requirements_test_all.txt
-cd ../indicam_hacs
+cd ../indicam-hacs
 pip3 install -r requirements.txt
 pytest tests
-
-
