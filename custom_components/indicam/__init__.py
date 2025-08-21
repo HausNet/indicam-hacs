@@ -40,7 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api_client=await create_client(hass, entry.data[CONF_CLIENT_API_KEY]),
         out_path=entry.data[CONF_PATH_OUT]
     )
-    await hass.config_entries.async_forward_entry_setup(entry, 'sensor')
+    await hass.config_entries.async_forward_entry_setups(entry, 'sensor')
     entry.add_update_listener(options_update_listener)
     return True
 
