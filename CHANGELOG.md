@@ -1,6 +1,21 @@
 # Change Log
 A log of changes made, following the [Common Changelog Format](https://common-changelog.org).
 
+## 1.0.7
+Pass platform as an array into async_forward_entry_setups()
+
+## 1.0.6
+Changed hass.config_entries->async_forward_entry_setup () to async_forward_entry_setups()
+
+## 1.0.5
+Fixed the reference to this repo in the manifest
+
+## 1.0.4
+Fixed typo with release 1.0.3
+
+## 1.0.3 
+Bumped aiofiles dependency to what's installed by HASS
+
 ## 1.0.2 - 2024-09-07
 Fixed transforming offset percentages to factors 
 
